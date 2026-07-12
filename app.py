@@ -1,20 +1,5 @@
 """
 app.py — Streamlit UI (한국·미국 주식/ETF 펀더멘탈 & 시장환경 분석기)
-
-실행 방법:
-    pip install -r requirements.txt
-    streamlit run app.py
-
-구조:
-    - analysis.py      : 순수 계산/점수화 로직 (yfinance/streamlit 의존성 없음, 단위테스트 대상)
-    - data_sources.py   : yfinance/FRED API 등 외부 데이터 수집
-    - app.py (이 파일)  : Streamlit UI, 위 두 모듈을 불러와 화면에 표시만 함
-
-테스트:
-    python -m unittest test_analysis.py -v
-
-배포:
-    Streamlit Community Cloud 무료 배포 방법은 README.md 참고
 """
 
 import os
@@ -22,6 +7,7 @@ import os
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from analysis import (
     KOREAN_ETF_NAME_MAP,
@@ -51,7 +37,7 @@ from data_sources import (
     analyze_market_environment,
 )
 
-st.set_page_config(page_title="한국·미국 주식/ETF 분석기", layout="wide")
+st.set_page_config(page_title="한국·미국 주식/ETF 분석기", page_icon="📊", layout="wide")
 
 MARKET_LABELS = {
     "경기동향": "경기동향 (경기활황 vs 경기불황)",
@@ -60,15 +46,62 @@ MARKET_LABELS = {
     "자본시장_정책": "자본시장 정책 변화 (긍정 vs 부정)",
 }
 
+# =========================================================
+# 디자인 헬퍼
+# =========================================================
+st.markdown("""
+<style>
+[data-testid="metric-container"] {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 10px;
+    padding: 14px 16px;
+}
+div[data-testid="stMetricValue"] { font-size: 1.2rem !important; }
+</style>
+""", unsafe_allow_html=True)
+
+
+def _score_color(s: int) -> str:
+    return "#28a745" if s >= 65 else ("#fd7e14" if s >= 50 else "#dc3545")
+
+
+def score_pill(s: int) -> str:
+    c = _score_color(s)
+    return (f'<span style="background:{c};color:#fff;padding:2px 14px;'
+            f'border-radius:20px;font-size:0.88em;font-weight:700;">{s}점</span>')
+
+
+def section_header(num: str, title: str, score: int):
+    st.markdown(
+        f'<h3 style="margin-bottom:6px">{num} {title} &nbsp;{score_pill(score)}</h3>',
+        unsafe_allow_html=True,
+    )
+
+
+def kv_cards(score_detail: dict, ncols: int = 3):
+    """score_detail dict를 카드형 metric으로 시각화"""
+    items = [(k, v) for k, v in score_detail.items() if not str(k).startswith("_")]
+    for i in range(0, len(items), ncols):
+        chunk = items[i:i + ncols]
+        cols = st.columns(ncols)
+        for col, (key, val) in zip(cols, chunk):
+            vs = str(val)
+            if any(x in vs for x in ["개선", "상승추세", "우수", "정상"]):
+                icon = "✅"
+            elif any(x in vs for x in ["악화", "하락추세", "없음"]):
+                icon = "⚠️"
+            else:
+                icon = "📊"
+            label = key.replace("_", " ")
+            col.metric(f"{icon} {label}", vs[:55] if len(vs) > 55 else vs)
+
 
 # =========================================================
 # 사이드바
 # =========================================================
-st.title("📊 한국·미국 주식/ETF 펀더멘탈 & 시장환경 분석기")
-st.caption("과거 5년 데이터를 기반으로 펀더멘탈 4개 항목 + 시장환경 4개 항목을 평가하는 프로토타입입니다.")
-
 with st.sidebar:
-    st.subheader("설정")
+    st.title("⚙️ 설정")
     fred_api_key = st.text_input(
         "FRED API 키",
         value=os.environ.get("FRED_API_KEY", ""),
@@ -79,22 +112,20 @@ with st.sidebar:
     st.divider()
     st.caption(
         "**한국 종목 입력 방법**\n"
-        "- 한글 이름 직접 입력: " + ", ".join(list(KOREAN_STOCK_NAME_MAP.keys())[:5]) + " 등\n"
-        "- 6자리 종목코드 직접 입력 (예: 005930 = 삼성전자)\n"
-        "- 지원되는 ETF명: " + ", ".join(KOREAN_ETF_NAME_MAP.keys()) + "\n"
-        "- 그 외 ETF명은 종목코드로 입력해주세요 (한국거래소 KIND에서 조회 가능)"
+        "- 한글 이름: " + ", ".join(list(KOREAN_STOCK_NAME_MAP.keys())[:5]) + " 등\n"
+        "- 6자리 종목코드 (예: 005930 = 삼성전자)\n"
+        "- ETF명: " + ", ".join(KOREAN_ETF_NAME_MAP.keys()) + "\n"
+        "- 그 외 ETF는 종목코드로 입력 (KIND 조회)"
     )
     st.divider()
     st.subheader("종합점수 가중치")
     fundamental_weight_pct = st.slider(
-        "펀더멘탈 vs 시장환경 비중",
-        min_value=0, max_value=100, value=60, step=5,
-        help="슬라이더 값이 펀더멘탈 비중(%)입니다. 나머지는 시장환경 비중으로 자동 계산됩니다.",
+        "펀더멘탈 vs 시장환경 비중", 0, 100, 60, step=5,
+        help="슬라이더 값이 펀더멘탈 비중(%)입니다. 나머지는 시장환경 비중.",
     )
     st.caption(f"펀더멘탈 {fundamental_weight_pct}% : 시장환경 {100 - fundamental_weight_pct}%")
-
     with st.expander("시장환경 세부 가중치 (선택)"):
-        st.caption("시장환경 4개 항목의 상대적 중요도를 조절합니다. (자동으로 비율 정규화됩니다)")
+        st.caption("4개 항목의 상대적 중요도 (자동 정규화)")
         w_biz = st.slider("경기동향", 0, 100, 25, key="w_biz")
         w_mon = st.slider("통화/재정정책", 0, 100, 25, key="w_mon")
         w_geo = st.slider("지정학적 불확실성", 0, 100, 25, key="w_geo")
@@ -107,15 +138,28 @@ with st.sidebar:
             "자본시장_정책": w_cap / _w_sum,
         }
 
-ticker_input = st.text_input(
-    "티커 또는 종목코드를 입력하세요 (예: AAPL, SPY, 005930, KODEX 200, 엔비디아, 테슬라)", value="AAPL"
-).strip()
+
+# =========================================================
+# 메인 헤더 & 입력
+# =========================================================
+st.title("📊 한국·미국 주식/ETF 펀더멘탈 & 시장환경 분석기")
+st.caption("과거 5년 데이터를 기반으로 펀더멘탈 4개 항목 + 시장환경 4개 항목을 평가하는 프로토타입입니다.")
+
+col_input, col_btn = st.columns([5, 1])
+with col_input:
+    ticker_input = st.text_input(
+        "종목 입력",
+        placeholder="예: AAPL, SPY, 005930, KODEX 200, 엔비디아, 삼성전자, 로켓랩",
+        label_visibility="collapsed",
+    ).strip()
+with col_btn:
+    analyze_btn = st.button("🔍 분석", use_container_width=True, type="primary")
 
 
 # =========================================================
 # 분석 실행
 # =========================================================
-if st.button("분석 시작") and ticker_input:
+if analyze_btn and ticker_input:
     with st.spinner("데이터 수집 및 분석 중..."):
         try:
             classification = classify_ticker(ticker_input)
@@ -131,30 +175,48 @@ if st.button("분석 시작") and ticker_input:
                 st.error("가격 데이터를 가져오지 못했습니다. 종목코드/티커를 확인해주세요.")
                 st.stop()
 
-            st.header(f"{info.get('longName', ticker_input)} ({resolved_ticker})")
-            market_label = "🇰🇷 한국" if market_type == "KR" else "🇺🇸 미국"
-            st.write(f"**시장**: {market_label} | **유형**: {'ETF' if is_etf else '개별주식'} | **통화**: {currency}")
-            if market_type == "KR" and not is_etf:
-                st.info("ℹ️ 한국 개별주식은 yfinance의 재무제표 제공 범위가 제한적입니다. "
-                        "①②번 항목 일부가 비어있을 수 있으니 DART 공시 원문 확인을 권장합니다.")
+            # ---- 종목 헤더 ----
+            market_flag = "🇰🇷" if market_type == "KR" else "🇺🇸"
+            type_label = "ETF" if is_etf else "개별주식"
+            cur_price = info.get("currentPrice") or info.get("regularMarketPrice")
+            prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
+            day_chg = ((cur_price - prev_close) / prev_close * 100) if (cur_price and prev_close) else None
 
-            # ---- 시장환경 분석 (산업동향 점수에서 경기국면 참조를 위해 먼저 계산) ----
+            st.markdown("---")
+            h_left, h_right = st.columns([3, 2])
+            with h_left:
+                st.header(f"{info.get('longName', ticker_input)}")
+                st.markdown(
+                    f"`{resolved_ticker}` &nbsp;|&nbsp; {market_flag} {market_type} "
+                    f"&nbsp;|&nbsp; {type_label} &nbsp;|&nbsp; {currency}"
+                )
+            with h_right:
+                if cur_price:
+                    fmt = f"{cur_price:,.0f}" if currency == "KRW" else f"{cur_price:,.2f}"
+                    chg_color = "#28a745" if (day_chg or 0) >= 0 else "#dc3545"
+                    chg_str = f"{day_chg:+.2f}%" if day_chg is not None else ""
+                    st.markdown(
+                        f'<div style="text-align:right;padding-top:12px">'
+                        f'<div style="font-size:1.9rem;font-weight:700;line-height:1.2">'
+                        f'{fmt} <span style="font-size:1rem;color:#6c757d">{currency}</span></div>'
+                        f'<div style="font-size:1rem;font-weight:600;color:{chg_color}">'
+                        f'{chg_str} 전일 대비</div></div>',
+                        unsafe_allow_html=True,
+                    )
+
+            if market_type == "KR" and not is_etf:
+                st.info("ℹ️ 한국 개별주식은 yfinance 재무제표 범위가 제한적입니다. ①② 일부 항목은 DART 원문을 확인하세요.")
+            if market_type == "KR":
+                st.caption("⚠️ 시장환경 분석은 미국 매크로 지표(FRED, VIX)를 사용합니다. 한국 시장 적용은 근사치입니다.")
+
+            # ---- 사전 계산 ----
             market = analyze_market_environment(fred_api_key)
             business_cycle_verdict = market.get("경기동향", {}).get("판정", "")
-            if market_type == "KR":
-                st.caption(
-                    "⚠️ 현재 시장환경 분석은 미국 매크로 지표(FRED, VIX)를 사용합니다. "
-                    "한국 시장에 미국 지표를 그대로 적용하는 것은 근사치일 뿐이며, "
-                    "정확한 판단을 위해서는 한국은행 ECOS 연동이 필요합니다."
-                )
-
             market_scores = {key: score_market_item(market.get(key, {}).get("판정", "")) for key in MARKET_LABELS}
 
-            # ---- 기술적 분석 ----
             tech = analyze_technical(hist)
             tech_score, tech_score_detail = score_technical(tech)
 
-            # ---- 펀더멘탈 분석 (ETF/개별주 분기) ----
             fundamental_scores = {}
             if is_etf:
                 etf_data = fetch_etf_raw_data(ticker_obj, info)
@@ -175,46 +237,80 @@ if st.button("분석 시작") and ticker_input:
                 fundamental_scores["산업동향"] = industry_score
 
             fundamental_scores["기술적분석"] = tech_score
-
-            # ---- 종합 점수 ----
             overall = compute_overall_score(fundamental_scores, market_scores, market_weights, fundamental_weight_pct)
+            ov_score = overall["overall_score"]
+            ov_color = _score_color(ov_score)
 
-            st.subheader("🏆 종합 평가")
-            b1, b2, b3 = st.columns(3)
-            b1.metric("종합 점수", f"{overall['overall_score']}점", overall["grade"])
-            b2.metric("펀더멘탈 평균", f"{round(overall['fundamental_avg'])}점")
-            b3.metric("시장환경 평균", f"{round(overall['market_avg'])}점")
+            # ---- 종합 평가 ----
+            st.markdown("---")
+            st.markdown(
+                f'<h2 style="margin-bottom:4px">🏆 종합 평가 &nbsp;'
+                f'<span style="background:{ov_color};color:#fff;padding:4px 22px;'
+                f'border-radius:24px;font-size:1rem;">'
+                f'{ov_score}점 &nbsp;{overall["grade"]}</span></h2>',
+                unsafe_allow_html=True,
+            )
             if is_etf:
-                st.caption("⚠️ ETF는 전통적 재무제표가 없어 운용보수·순자산·집중도 기반 ETF구성 점수로 대체했습니다.")
+                st.caption("⚠️ ETF는 재무제표 대신 운용보수·순자산·집중도 기반 ETF구성 점수를 사용합니다.")
 
-            radar_labels = list(fundamental_scores.keys()) + [MARKET_LABELS[k].split(" (")[0] for k in MARKET_LABELS]
+            sc1, sc2, sc3, sc4 = st.columns(4)
+            sc1.metric("🏆 종합 점수", f"{ov_score}점")
+            sc2.metric("📋 펀더멘탈 평균", f"{round(overall['fundamental_avg'])}점")
+            sc3.metric("🌍 시장환경 평균", f"{round(overall['market_avg'])}점")
+            sc4.metric("🎯 등급", overall["grade"])
+
+            # 레이더 차트
+            radar_labels = (
+                list(fundamental_scores.keys())
+                + [MARKET_LABELS[k].split(" (")[0] for k in MARKET_LABELS]
+            )
             radar_values = list(fundamental_scores.values()) + list(market_scores.values())
             radar_fig = go.Figure()
-            radar_fig.add_trace(go.Scatterpolar(r=radar_values + [radar_values[0]],
-                                                 theta=radar_labels + [radar_labels[0]],
-                                                 fill="toself", name="평가 점수"))
-            radar_fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
-                                     showlegend=False, height=420, margin=dict(l=40, r=40, t=30, b=30))
+            radar_fig.add_trace(go.Scatterpolar(
+                r=radar_values + [radar_values[0]],
+                theta=radar_labels + [radar_labels[0]],
+                fill="toself",
+                fillcolor="rgba(78,141,245,0.18)",
+                line=dict(color="#4e8df5", width=2),
+                name="평가 점수",
+            ))
+            radar_fig.update_layout(
+                polar=dict(radialaxis=dict(visible=True, range=[0, 100], tickfont=dict(size=10))),
+                showlegend=False, height=400,
+                margin=dict(l=50, r=50, t=20, b=20),
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
             st.plotly_chart(radar_fig, use_container_width=True)
+            st.markdown("---")
 
-            st.divider()
-
-            # ---- 펀더멘탈 상세 ----
+            # =========================================================
+            # 펀더멘탈 상세
+            # =========================================================
             if is_etf:
-                st.subheader(f"① ETF 구성 분석 — {etf_score}점 (재무제표 대체)")
-                st.write(etf_score_detail)
-                st.json(etf_data, expanded=False)
+                section_header("①", "ETF 구성 분석", etf_score)
+                st.caption("재무제표 대신 운용보수·순자산·집중도로 평가합니다.")
+                kv_cards(etf_score_detail)
+                with st.expander("ETF 원시 데이터"):
+                    st.json({k: v for k, v in etf_data.items() if k != "_데이터품질"}, expanded=False)
             else:
-                st.subheader(f"① 기업 내부요인 평가 — {internal_score}점")
-                st.write(internal_score_detail)
-                st.json(internal, expanded=False)
+                # ① 기업 내부요인
+                section_header("①", "기업 내부요인 평가", internal_score)
+                kv_cards(internal_score_detail)
+                with st.expander("추이 원시 데이터"):
+                    st.json(internal, expanded=False)
 
-                st.subheader(f"② 재무지표 평가 — {ratios_score}점")
-                st.write(ratios_score_detail)
-                st.json(ratios, expanded=False)
+                st.markdown("")
 
-                # ---- 밸류에이션 멀티플 & 경쟁사 비교 ----
-                st.subheader("📊 밸류에이션 멀티플 비교 — PER / PBR / PSR / EPS / ROE")
+                # ② 재무지표
+                section_header("②", "재무지표 평가", ratios_score)
+                kv_cards(ratios_score_detail)
+                with st.expander("재무지표 원시 데이터"):
+                    st.json(ratios, expanded=False)
+
+                st.markdown("")
+
+                # 밸류에이션 비교
+                st.markdown("### 📊 밸류에이션 멀티플 비교 — PER / PBR / PSR / EPS / ROE")
                 main_metrics = extract_valuation_metrics(info)
                 peers_raw = get_peer_info_list(info, resolved_ticker, max_peers=5)
                 peers_data_v = [
@@ -222,22 +318,29 @@ if st.button("분석 시작") and ticker_input:
                     for p in peers_raw
                 ]
                 valuation = compare_valuation_vs_peers(resolved_ticker, main_metrics, peers_data_v)
-
                 rows_table = valuation["지표_테이블"]
                 peer_list = valuation["비교종목"]
 
                 if rows_table:
-                    # 컬럼 순서: 현재종목 → 업계평균 → 경쟁사들 → 평가
                     col_order = [resolved_ticker, "업계평균"] + peer_list + ["평가"]
                     df_val = pd.DataFrame(rows_table).T
                     df_val.index.name = "지표"
-
-                    # 설명 컬럼 삽입
                     df_val.insert(0, "설명", [
                         VALUATION_METRIC_INFO.get(k, ("", "", ""))[0] for k in df_val.index
                     ])
                     avail_cols = ["설명"] + [c for c in col_order if c in df_val.columns]
-                    st.dataframe(df_val[avail_cols], use_container_width=True)
+
+                    def _color_eval(val):
+                        if not isinstance(val, str): return ""
+                        if "✅" in val: return "background-color:#d4edda;color:#155724;font-weight:600"
+                        if "⚠️" in val: return "background-color:#f8d7da;color:#721c24;font-weight:600"
+                        if "➖" in val: return "background-color:#e9ecef;color:#495057"
+                        return ""
+
+                    styled_val = df_val[avail_cols].style
+                    if "평가" in avail_cols:
+                        styled_val = styled_val.applymap(_color_eval, subset=["평가"])
+                    st.dataframe(styled_val, use_container_width=True)
 
                     if peer_list:
                         st.caption(f"비교 대상 ({len(peer_list)}개): {', '.join(peer_list)}")
@@ -251,31 +354,93 @@ if st.button("분석 시작") and ticker_input:
                 else:
                     st.info("밸류에이션 지표 데이터를 가져오지 못했습니다.")
 
-                st.subheader(f"③ 산업동향 평가 — {industry_score}점")
-                st.write(industry)
-                st.write(industry_score_detail)
+                st.markdown("")
 
-            st.subheader(f"④ 기술적 분석 — {tech_score}점")
-            col1, col2, col3 = st.columns(3)
-            col1.metric("추세", tech["추세"])
-            col2.metric("RSI(14)", tech["RSI(14)"])
-            col3.metric("투자심리", tech["투자심리"])
-            st.write(f"**수급(거래량)**: {tech['수급_거래량']}")
+                # ③ 산업동향
+                section_header("③", "산업동향 평가", industry_score)
+                ind1, ind2, ind3, ind4 = st.columns(4)
+                ind1.metric("🏭 섹터", industry.get("섹터", "N/A"))
+                ind2.metric("🔬 세부산업", industry.get("세부산업", "N/A")[:30])
+                ind3.metric("📈 산업주기", industry.get("산업주기", "N/A"))
+                ind4.metric("🔄 산업특성", industry.get("산업특성", "N/A")[:20])
+                kv_cards(industry_score_detail)
 
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=tech["chart_data"].index, y=tech["chart_data"]["Close"], name="종가"))
-            fig.add_trace(go.Scatter(x=tech["chart_data"].index, y=tech["chart_data"]["MA120"], name="MA120(장기추세)"))
-            fig.update_layout(height=400, margin=dict(l=20, r=20, t=30, b=20))
-            st.plotly_chart(fig, use_container_width=True)
+            st.markdown("")
 
-            # ---- 시장환경 상세 ----
-            st.subheader("🌍 시장환경 분석")
-            cols = st.columns(4)
+            # ④ 기술적 분석
+            section_header("④", "기술적 분석", tech_score)
+            t1, t2, t3, t4 = st.columns(4)
+            trend_short = "상승" if "상승" in tech["추세"] else "하락"
+            t1.metric("📈 추세", trend_short, tech["추세"].replace("추세 ", "").replace("(", "").replace(")", ""))
+            rsi_val = tech["RSI(14)"]
+            rsi_icon = "🔴" if isinstance(rsi_val, float) and (rsi_val > 70 or rsi_val < 30) else "🟢"
+            t2.metric(f"{rsi_icon} RSI(14)", rsi_val)
+            t3.metric("🧠 투자심리", tech["투자심리"])
+            vol_short = "급증" if "급증" in tech["수급_거래량"] else "보통"
+            t4.metric("📦 거래량", vol_short)
+
+            # 가격 차트 (거래량 서브플롯 포함)
+            chart_data = tech["chart_data"]
+            price_fig = make_subplots(
+                rows=2, cols=1, shared_xaxes=True,
+                row_heights=[0.72, 0.28], vertical_spacing=0.04,
+                subplot_titles=("", "거래량"),
+            )
+            price_fig.add_trace(go.Scatter(
+                x=chart_data.index, y=chart_data["Close"],
+                name="종가", line=dict(color="#4e8df5", width=2)
+            ), row=1, col=1)
+            price_fig.add_trace(go.Scatter(
+                x=chart_data.index, y=chart_data["MA20"],
+                name="MA20", line=dict(color="#fd7e14", width=1, dash="dot"), opacity=0.85
+            ), row=1, col=1)
+            price_fig.add_trace(go.Scatter(
+                x=chart_data.index, y=chart_data["MA60"],
+                name="MA60", line=dict(color="#28a745", width=1, dash="dot"), opacity=0.85
+            ), row=1, col=1)
+            price_fig.add_trace(go.Scatter(
+                x=chart_data.index, y=chart_data["MA120"],
+                name="MA120", line=dict(color="#dc3545", width=1.5)
+            ), row=1, col=1)
+            price_fig.add_trace(go.Bar(
+                x=chart_data.index, y=chart_data["Volume"],
+                name="거래량", marker_color="#adb5bd", opacity=0.6
+            ), row=2, col=1)
+            price_fig.update_layout(
+                height=500,
+                margin=dict(l=20, r=20, t=30, b=20),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                hovermode="x unified",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(248,249,250,1)",
+            )
+            price_fig.update_yaxes(gridcolor="#e9ecef")
+            price_fig.update_xaxes(rangeslider_visible=False)
+            st.plotly_chart(price_fig, use_container_width=True)
+
+            st.markdown("---")
+
+            # ---- 시장환경 ----
+            st.markdown("### 🌍 시장환경 분석")
+            m_cols = st.columns(4)
             for i, (key, label) in enumerate(MARKET_LABELS.items()):
-                data = market.get(key, {})
-                verdict = data.get("판정") or data.get("안내") or data.get("오류") or "N/A"
-                cols[i].metric(f"{label.split(' (')[0]} ({market_scores[key]}점)", verdict)
+                data_m = market.get(key, {})
+                verdict = data_m.get("판정") or data_m.get("안내") or data_m.get("오류") or "N/A"
+                sc = market_scores[key]
+                short_label = label.split(" (")[0]
+                badge_color = _score_color(sc)
+                m_cols[i].markdown(
+                    f'<div style="background:#f8f9fa;border:1px solid #e9ecef;border-radius:10px;'
+                    f'padding:14px;text-align:center">'
+                    f'<div style="font-size:0.8rem;color:#6c757d;margin-bottom:4px">{short_label}</div>'
+                    f'<div style="font-size:0.95rem;font-weight:600;margin-bottom:6px">{verdict[:22]}</div>'
+                    f'<span style="background:{badge_color};color:#fff;padding:1px 10px;'
+                    f'border-radius:12px;font-size:0.8rem">{sc}점</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
+            st.markdown("")
             for key, label in MARKET_LABELS.items():
                 with st.expander(label):
                     st.write(market.get(key, {}))
@@ -284,7 +449,7 @@ if st.button("분석 시작") and ticker_input:
             st.error(f"분석 중 오류가 발생했습니다: {e}")
             st.info("티커가 올바른지, 또는 yfinance가 해당 종목 데이터를 제공하는지 확인해주세요.")
 
-st.divider()
+st.markdown("---")
 st.caption(
     "⚠️ 이 도구는 프로토타입이며 투자 조언이 아닙니다. 점수/등급은 규칙 기반 근사치로, "
     "재무데이터는 yfinance 기준이라 실제 공시와 차이가 있을 수 있으니 투자 판단 시 원문 공시를 반드시 확인하세요."
