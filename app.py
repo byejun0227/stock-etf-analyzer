@@ -175,9 +175,11 @@ with st.sidebar:
                 st.rerun()
             else:
                 st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
-                _dbg_id = "secrets 로드됨" if _admin_id != "admin" else "기본값(admin) — Secrets 미설정"
-                _dbg_pw = "secrets 로드됨" if _admin_pw != "admin1234" else "기본값(admin1234) — Secrets 미설정"
-                st.caption(f"🔍 진단: ID={_dbg_id} / PW={_dbg_pw}")
+                _dbg_id = f"로드됨(길이{len(_admin_id)})" if _admin_id != "admin" else "기본값(admin)"
+                _dbg_pw = f"로드됨(길이{len(_admin_pw)})" if _admin_pw != "admin1234" else "기본값(admin1234)"
+                _dbg_inp_id = f"입력길이{len(_input_id.strip())}"
+                _dbg_inp_pw = f"입력길이{len(_input_pw.strip())}"
+                st.caption(f"🔍 진단 — 저장된: ID={_dbg_id}, PW={_dbg_pw} / 입력된: ID={_dbg_inp_id}, PW={_dbg_inp_pw}")
         st.divider()
         st.caption(
             "**한국 종목 입력 방법**\n"
