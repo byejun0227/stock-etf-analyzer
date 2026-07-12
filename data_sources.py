@@ -20,6 +20,21 @@ from analysis import normalize_ticker_input, summarize_etf_fundamentals
 
 FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
+# 업종별 대표 경쟁사 풀 (미국 상장 대형주 기준)
+SECTOR_PEERS = {
+    "Technology":             ["AAPL", "MSFT", "NVDA", "AMD", "INTC", "AVGO", "QCOM", "MU", "ORCL", "CRM"],
+    "Communication Services": ["GOOGL", "META", "NFLX", "DIS", "T", "VZ", "CMCSA", "SNAP", "PINS"],
+    "Consumer Cyclical":      ["AMZN", "TSLA", "HD", "MCD", "NKE", "TGT", "LOW", "SBUX", "BKNG"],
+    "Consumer Defensive":     ["WMT", "KO", "PEP", "PG", "COST", "PM", "MO", "CL", "GIS"],
+    "Healthcare":             ["JNJ", "PFE", "MRK", "ABBV", "LLY", "BMY", "AMGN", "GILD", "CVS"],
+    "Financial Services":     ["JPM", "BAC", "WFC", "GS", "MS", "BLK", "C", "AXP", "V", "MA"],
+    "Industrials":            ["HON", "UPS", "CAT", "MMM", "GE", "BA", "LMT", "RTX", "DE"],
+    "Energy":                 ["XOM", "CVX", "COP", "SLB", "EOG", "OXY", "PSX", "VLO"],
+    "Basic Materials":        ["LIN", "APD", "FCX", "NEM", "NUE", "ALB", "DD", "DOW"],
+    "Utilities":              ["NEE", "DUK", "SO", "D", "AEP", "EXC", "XEL", "SRE"],
+    "Real Estate":            ["AMT", "PLD", "CCI", "EQIX", "PSA", "SPG", "O", "WELL"],
+}
+
 
 # =========================================================
 # 1. 종목 판별 (한국/미국 시장 자동 감지)
@@ -58,6 +73,29 @@ def classify_ticker(ticker: str):
 # =========================================================
 # 2. 가격/재무 데이터 수집
 # =========================================================
+def get_peer_info_list(info: dict, resolved_ticker: str, max_peers: int = 5) -> list:
+    """업종 기반으로 경쟁사 최대 max_peers개 선정 후 yfinance info 반환.
+    returns: [{"ticker": "AAPL", "info": {...}}, ...]"""
+    sector = info.get("sector", "")
+    pool = SECTOR_PEERS.get(sector, [])
+
+    # 현재 종목 풀에서 제외
+    base = resolved_ticker.split(".")[0].upper()
+    pool = [t for t in pool if t.upper() != base]
+
+    result = []
+    for sym in pool:
+        if len(result) >= max_peers:
+            break
+        try:
+            peer_info = yf.Ticker(sym).info
+            if peer_info and peer_info.get("regularMarketPrice") is not None:
+                result.append({"ticker": sym, "info": peer_info})
+        except Exception:
+            continue
+    return result
+
+
 def get_price_history(ticker_obj, years: int = 5) -> pd.DataFrame:
     end = datetime.today()
     start = end - timedelta(days=365 * years)

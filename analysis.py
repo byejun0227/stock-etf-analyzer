@@ -448,6 +448,78 @@ def score_etf_fundamentals(etf_data: dict, currency: str = "USD"):
     return score, detail
 
 
+# =========================================================
+# 4. 밸류에이션 멀티플 (PER / PBR / PSR / EPS / ROE)
+# =========================================================
+VALUATION_METRIC_INFO = {
+    "PER":    ("주가수익비율",   "낮을수록 수익 대비 저평가. 업종·성장성에 따라 다르게 해석.",  "low_good"),
+    "PBR":    ("주가순자산비율", "낮을수록 자산 대비 저평가. 1배 미만은 청산가치 이하.",       "low_good"),
+    "PSR":    ("주가매출비율",   "낮을수록 매출 대비 저평가. 적자·성장 기업 평가에 유용.",      "low_good"),
+    "EPS":    ("주당순이익",    "높을수록 주당 이익이 크고 PER 계산의 기반.",                 "high_good"),
+    "ROE(%)": ("자기자본이익률", "높을수록 자본 활용 효율이 우수. 15% 이상이 양호 기준.",      "high_good"),
+}
+
+
+def extract_valuation_metrics(info: dict) -> dict:
+    """yfinance info dict에서 PER/PBR/PSR/EPS/ROE 추출"""
+    def _safe(val, mult=1.0):
+        try:
+            return round(float(val) * mult, 2) if val is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    per_raw = info.get("trailingPE") or info.get("forwardPE")
+    return {
+        "PER":    _safe(per_raw),
+        "PBR":    _safe(info.get("priceToBook")),
+        "PSR":    _safe(info.get("priceToSalesTrailing12Months")),
+        "EPS":    _safe(info.get("trailingEps")),
+        "ROE(%)": _safe(info.get("returnOnEquity"), mult=100),
+    }
+
+
+def compare_valuation_vs_peers(main_ticker: str, main_metrics: dict, peers_data: list) -> dict:
+    """PER/PBR/PSR/EPS/ROE를 경쟁사 최대 5개와 비교.
+
+    peers_data: [{"ticker": "AAPL", "metrics": {...}}, ...]
+    returns:
+        비교종목: list[str]
+        지표_테이블: {지표명: {ticker: val, ..., "업계평균": val, "평가": str}}
+    """
+    peer_tickers = [p["ticker"] for p in peers_data]
+    rows = {}
+
+    for key, (_, _, direction) in VALUATION_METRIC_INFO.items():
+        main_val = main_metrics.get(key)
+        peer_map = {p["ticker"]: p["metrics"].get(key) for p in peers_data}
+        valid = [v for v in peer_map.values() if v is not None]
+        peer_avg = round(sum(valid) / len(valid), 2) if valid else None
+
+        if main_val is None or peer_avg is None:
+            evaluation = "데이터 없음"
+        elif direction == "low_good":
+            if main_val < peer_avg * 0.8:
+                evaluation = "✅ 저평가"
+            elif main_val < peer_avg * 1.2:
+                evaluation = "➖ 평균 수준"
+            else:
+                evaluation = "⚠️ 고평가"
+        else:
+            if main_val > peer_avg * 1.2:
+                evaluation = "✅ 상위 (우수)"
+            elif main_val > peer_avg * 0.8:
+                evaluation = "➖ 평균 수준"
+            else:
+                evaluation = "⚠️ 하위"
+
+        row = {main_ticker: main_val, "업계평균": peer_avg}
+        row.update(peer_map)
+        row["평가"] = evaluation
+        rows[key] = row
+
+    return {"비교종목": peer_tickers, "지표_테이블": rows}
+
+
 def score_market_item(verdict_text: str) -> int:
     """시장환경 판정 문구를 점수로 변환"""
     positive_kw = ["활황", "완화", "해소", "긍정", "개선"]

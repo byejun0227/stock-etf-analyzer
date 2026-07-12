@@ -19,15 +19,19 @@ app.py — Streamlit UI (한국·미국 주식/ETF 펀더멘탈 & 시장환경 �
 
 import os
 
+import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 
 from analysis import (
     KOREAN_ETF_NAME_MAP,
+    VALUATION_METRIC_INFO,
     analyze_internal_factors,
     analyze_financial_ratios,
     analyze_industry,
     analyze_technical,
+    extract_valuation_metrics,
+    compare_valuation_vs_peers,
     score_internal_factors,
     score_financial_ratios,
     score_industry,
@@ -41,6 +45,7 @@ from data_sources import (
     classify_ticker,
     get_price_history,
     get_financials,
+    get_peer_info_list,
     fetch_etf_raw_data,
     analyze_market_environment,
 )
@@ -205,6 +210,44 @@ if st.button("분석 시작") and ticker_input:
                 st.subheader(f"② 재무지표 평가 — {ratios_score}점")
                 st.write(ratios_score_detail)
                 st.json(ratios, expanded=False)
+
+                # ---- 밸류에이션 멀티플 & 경쟁사 비교 ----
+                st.subheader("📊 밸류에이션 멀티플 비교 — PER / PBR / PSR / EPS / ROE")
+                main_metrics = extract_valuation_metrics(info)
+                peers_raw = get_peer_info_list(info, resolved_ticker, max_peers=5)
+                peers_data_v = [
+                    {"ticker": p["ticker"], "metrics": extract_valuation_metrics(p["info"])}
+                    for p in peers_raw
+                ]
+                valuation = compare_valuation_vs_peers(resolved_ticker, main_metrics, peers_data_v)
+
+                rows_table = valuation["지표_테이블"]
+                peer_list = valuation["비교종목"]
+
+                if rows_table:
+                    # 컬럼 순서: 현재종목 → 업계평균 → 경쟁사들 → 평가
+                    col_order = [resolved_ticker, "업계평균"] + peer_list + ["평가"]
+                    df_val = pd.DataFrame(rows_table).T
+                    df_val.index.name = "지표"
+
+                    # 설명 컬럼 삽입
+                    df_val.insert(0, "설명", [
+                        VALUATION_METRIC_INFO.get(k, ("", "", ""))[0] for k in df_val.index
+                    ])
+                    avail_cols = ["설명"] + [c for c in col_order if c in df_val.columns]
+                    st.dataframe(df_val[avail_cols], use_container_width=True)
+
+                    if peer_list:
+                        st.caption(f"비교 대상 ({len(peer_list)}개): {', '.join(peer_list)}")
+                    else:
+                        st.info("동종업계 비교 대상을 찾지 못했습니다. 현재 미국 대형주 업종만 지원됩니다.")
+
+                    with st.expander("지표 해석 가이드"):
+                        for key, (name, desc, direction) in VALUATION_METRIC_INFO.items():
+                            good = "낮을수록 유리" if direction == "low_good" else "높을수록 유리"
+                            st.markdown(f"**{key}** ({name}): {desc} _{good}_")
+                else:
+                    st.info("밸류에이션 지표 데이터를 가져오지 못했습니다.")
 
                 st.subheader(f"③ 산업동향 평가 — {industry_score}점")
                 st.write(industry)
