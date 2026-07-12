@@ -530,7 +530,8 @@ VALUATION_METRIC_INFO = {
 
 
 def extract_valuation_metrics(info: dict) -> dict:
-    """yfinance info dict에서 PER/PBR/PSR/EPS/ROE 추출"""
+    """yfinance info dict에서 PER/PBR/PSR/EPS/ROE 추출.
+    한국 주식은 priceToBook/trailingEps가 없을 수 있어 bookValue/netIncomeToCommon으로 보완."""
     def _safe(val, mult=1.0):
         try:
             return round(float(val) * mult, 2) if val is not None else None
@@ -538,11 +539,36 @@ def extract_valuation_metrics(info: dict) -> dict:
             return None
 
     per_raw = info.get("trailingPE") or info.get("forwardPE")
+
+    pbr = _safe(info.get("priceToBook"))
+    if pbr is None:
+        price = info.get("currentPrice") or info.get("regularMarketPrice")
+        bvps = info.get("bookValue")
+        if price and bvps:
+            try:
+                bvps_f = float(bvps)
+                if bvps_f > 0:
+                    pbr = round(float(price) / bvps_f, 2)
+            except (TypeError, ValueError):
+                pass
+
+    eps = _safe(info.get("trailingEps"))
+    if eps is None:
+        net_income = info.get("netIncomeToCommon")
+        shares = info.get("sharesOutstanding")
+        if net_income and shares:
+            try:
+                shares_f = float(shares)
+                if shares_f > 0:
+                    eps = round(float(net_income) / shares_f, 2)
+            except (TypeError, ValueError):
+                pass
+
     return {
         "PER":    _safe(per_raw),
-        "PBR":    _safe(info.get("priceToBook")),
+        "PBR":    pbr,
         "PSR":    _safe(info.get("priceToSalesTrailing12Months")),
-        "EPS":    _safe(info.get("trailingEps")),
+        "EPS":    eps,
         "ROE(%)": _safe(info.get("returnOnEquity"), mult=100),
     }
 

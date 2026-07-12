@@ -287,29 +287,62 @@ def analyze_business_cycle_kr(api_key: str) -> dict:
 
 
 def analyze_monetary_fiscal_policy_kr(api_key: str) -> dict:
-    """통화/재정정책 (한국): 한국은행 기준금리 + M2"""
+    """통화/재정정책 (한국): 한국은행 기준금리 + M2.
+    FRED 시리즈를 순서대로 시도하고, 모두 실패 시 채권ETF(195930.KS) 대리 지표 사용."""
     result = {}
-    try:
-        bok = fetch_fred_series("IRSTCB01KRM156N", api_key)
+
+    # FRED 한국 금리 시리즈 후보 (순서대로 시도)
+    _rate_candidates = [
+        ("IRSTCB01KRM156N", "한국 기준금리(%)"),   # OECD MEI: 중앙은행 금리
+        ("INTDSRKRM193N",   "한국 할인율(%)"),       # IMF IFS: 한국 할인율
+        ("IRLTLT01KRM156N", "한국 10년 국채금리(%)"), # OECD: 장기국채수익률
+    ]
+    bok = None
+    rate_label = "금리(%)"
+    for sid, lbl in _rate_candidates:
+        try:
+            s = fetch_fred_series(sid, api_key)
+            if s is not None and not s.empty:
+                bok = s
+                rate_label = lbl
+                break
+        except Exception:
+            continue
+
+    if bok is not None:
         bok_latest = bok.iloc[-1]
         bok_prev = bok.iloc[-6] if len(bok) >= 6 else bok.iloc[0]
         rate_dir = "긴축(금리 인상 기조)" if bok_latest > bok_prev else \
                    "완화(금리 인하 기조)" if bok_latest < bok_prev else "동결(변화 없음)"
-
-        m2_yoy = None
-        try:
-            m2_kr = fetch_fred_series("MYAGKRM052S", api_key)
-            if len(m2_kr) >= 13:
-                m2_yoy = (m2_kr.iloc[-1] / m2_kr.iloc[-13] - 1) * 100
-        except Exception:
-            pass
-
         result["판정"] = rate_dir
-        result["한국 기준금리(%)"] = f"{bok_prev:.2f} → {bok_latest:.2f}"
-        if m2_yoy is not None:
+        result[rate_label] = f"{bok_prev:.2f} → {bok_latest:.2f}"
+    else:
+        # 모든 FRED 시리즈 실패 → KODEX 국고채10년 ETF를 대리 지표로 사용
+        try:
+            bond = yf.Ticker("195930.KS").history(period="1y")["Close"].dropna()
+            if bond.empty:
+                raise ValueError("채권 ETF 데이터 없음")
+            b_latest = bond.iloc[-1]
+            b_prev = bond.iloc[-126] if len(bond) >= 126 else bond.iloc[0]
+            # 채권 가격 상승 = 금리 하락(완화), 하락 = 금리 상승(긴축)
+            rate_dir = "완화(금리 인하 추정)" if b_latest > b_prev * 1.005 else \
+                       "긴축(금리 인상 추정)" if b_latest < b_prev * 0.995 else "동결 추정"
+            result["판정"] = rate_dir
+            result["KODEX 국고채10년 추이"] = f"{b_prev:,.0f} → {b_latest:,.0f}"
+            result["참고"] = "FRED 한국 금리 데이터 조회 불가. KODEX 국고채10년 ETF(195930.KS) 가격 변화로 금리 방향 추정"
+        except Exception as e:
+            result["판정"] = "데이터 없음"
+            result["오류"] = f"금리 데이터 조회 불가: {e}"
+
+    # M2 (한국 통화량)
+    try:
+        m2_kr = fetch_fred_series("MYAGKRM052S", api_key)
+        if len(m2_kr) >= 13:
+            m2_yoy = (m2_kr.iloc[-1] / m2_kr.iloc[-13] - 1) * 100
             result["한국 M2 증가율(YoY,%)"] = round(m2_yoy, 2)
-    except Exception as e:
-        result["오류"] = f"FRED 데이터 조회 실패: {e}"
+    except Exception:
+        pass
+
     return result
 
 
