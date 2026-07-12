@@ -136,45 +136,92 @@ def render_market_detail(data: dict):
 
 
 # =========================================================
+# 기본값 (로그인 여부와 무관하게 항상 정의)
+# =========================================================
+try:
+    _default_fred_key = st.secrets.get("FRED_API_KEY", os.environ.get("FRED_API_KEY", ""))
+    _admin_id = st.secrets.get("ADMIN_ID", "admin")
+    _admin_pw = st.secrets.get("ADMIN_PW", "admin1234")
+except Exception:
+    _default_fred_key = os.environ.get("FRED_API_KEY", "")
+    _admin_id = "admin"
+    _admin_pw = "admin1234"
+
+fred_api_key = _default_fred_key
+fundamental_weight_pct = 60
+market_weights = {"경기동향": 0.25, "통화_재정정책": 0.25, "지정학_불확실성": 0.25, "자본시장_정책": 0.25}
+
+# =========================================================
 # 사이드바
 # =========================================================
 with st.sidebar:
-    st.title("⚙️ 설정")
-    fred_api_key = st.text_input(
-        "FRED API 키",
-        value=os.environ.get("FRED_API_KEY", ""),
-        type="password",
-        help="https://fred.stlouisfed.org/docs/api/api_key.html 에서 무료 발급",
-    )
-    st.caption("시장환경 분석(경기동향/통화정책/지정학) 계산에 필요합니다. 없으면 해당 항목은 건너뜁니다.")
-    st.divider()
-    st.caption(
-        "**한국 종목 입력 방법**\n"
-        "- 한글 이름: " + ", ".join(list(KOREAN_STOCK_NAME_MAP.keys())[:5]) + " 등\n"
-        "- 6자리 종목코드 (예: 005930 = 삼성전자)\n"
-        "- ETF명: " + ", ".join(KOREAN_ETF_NAME_MAP.keys()) + "\n"
-        "- 그 외 ETF는 종목코드로 입력 (KIND 조회)"
-    )
-    st.divider()
-    st.subheader("종합점수 가중치")
-    fundamental_weight_pct = st.slider(
-        "펀더멘탈 vs 시장환경 비중", 0, 100, 60, step=5,
-        help="슬라이더 값이 펀더멘탈 비중(%)입니다. 나머지는 시장환경 비중.",
-    )
-    st.caption(f"펀더멘탈 {fundamental_weight_pct}% : 시장환경 {100 - fundamental_weight_pct}%")
-    with st.expander("시장환경 세부 가중치 (선택)"):
-        st.caption("4개 항목의 상대적 중요도 (자동 정규화)")
-        w_biz = st.slider("경기동향", 0, 100, 25, key="w_biz")
-        w_mon = st.slider("통화/재정정책", 0, 100, 25, key="w_mon")
-        w_geo = st.slider("지정학적 불확실성", 0, 100, 25, key="w_geo")
-        w_cap = st.slider("자본시장 정책", 0, 100, 25, key="w_cap")
-        _w_sum = max(w_biz + w_mon + w_geo + w_cap, 1)
-        market_weights = {
-            "경기동향": w_biz / _w_sum,
-            "통화_재정정책": w_mon / _w_sum,
-            "지정학_불확실성": w_geo / _w_sum,
-            "자본시장_정책": w_cap / _w_sum,
-        }
+    _unlocked = st.session_state.get("settings_unlocked", False)
+
+    if not _unlocked:
+        st.title("🔒 설정")
+        st.caption("관리자만 설정을 변경할 수 있습니다.")
+        st.divider()
+        with st.form("settings_login_form"):
+            _input_id = st.text_input("아이디", placeholder="관리자 아이디")
+            _input_pw = st.text_input("비밀번호", type="password", placeholder="비밀번호")
+            _login_btn = st.form_submit_button("🔓 로그인", use_container_width=True)
+        if _login_btn:
+            if _input_id == _admin_id and _input_pw == _admin_pw:
+                st.session_state.settings_unlocked = True
+                st.rerun()
+            else:
+                st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
+        st.divider()
+        st.caption(
+            "**한국 종목 입력 방법**\n"
+            "- 한글 이름: " + ", ".join(list(KOREAN_STOCK_NAME_MAP.keys())[:5]) + " 등\n"
+            "- 6자리 종목코드 (예: 005930 = 삼성전자)\n"
+            "- ETF명: " + ", ".join(KOREAN_ETF_NAME_MAP.keys()) + "\n"
+            "- 그 외 ETF는 종목코드로 입력 (KIND 조회)"
+        )
+    else:
+        _hdr, _logout_col = st.columns([3, 2])
+        _hdr.markdown("### ⚙️ 설정")
+        if _logout_col.button("로그아웃", use_container_width=True):
+            st.session_state.settings_unlocked = False
+            st.rerun()
+
+        st.success("✅ 관리자 모드")
+        fred_api_key = st.text_input(
+            "FRED API 키",
+            value=_default_fred_key,
+            type="password",
+            help="https://fred.stlouisfed.org/docs/api/api_key.html 에서 무료 발급",
+        )
+        st.caption("시장환경 분석(경기동향/통화정책/지정학) 계산에 필요합니다.")
+        st.divider()
+        st.caption(
+            "**한국 종목 입력 방법**\n"
+            "- 한글 이름: " + ", ".join(list(KOREAN_STOCK_NAME_MAP.keys())[:5]) + " 등\n"
+            "- 6자리 종목코드 (예: 005930 = 삼성전자)\n"
+            "- ETF명: " + ", ".join(KOREAN_ETF_NAME_MAP.keys()) + "\n"
+            "- 그 외 ETF는 종목코드로 입력 (KIND 조회)"
+        )
+        st.divider()
+        st.subheader("종합점수 가중치")
+        fundamental_weight_pct = st.slider(
+            "펀더멘탈 vs 시장환경 비중", 0, 100, 60, step=5,
+            help="슬라이더 값이 펀더멘탈 비중(%)입니다. 나머지는 시장환경 비중.",
+        )
+        st.caption(f"펀더멘탈 {fundamental_weight_pct}% : 시장환경 {100 - fundamental_weight_pct}%")
+        with st.expander("시장환경 세부 가중치 (선택)"):
+            st.caption("4개 항목의 상대적 중요도 (자동 정규화)")
+            w_biz = st.slider("경기동향", 0, 100, 25, key="w_biz")
+            w_mon = st.slider("통화/재정정책", 0, 100, 25, key="w_mon")
+            w_geo = st.slider("지정학적 불확실성", 0, 100, 25, key="w_geo")
+            w_cap = st.slider("자본시장 정책", 0, 100, 25, key="w_cap")
+            _w_sum = max(w_biz + w_mon + w_geo + w_cap, 1)
+            market_weights = {
+                "경기동향": w_biz / _w_sum,
+                "통화_재정정책": w_mon / _w_sum,
+                "지정학_불확실성": w_geo / _w_sum,
+                "자본시장_정책": w_cap / _w_sum,
+            }
 
 
 # =========================================================
