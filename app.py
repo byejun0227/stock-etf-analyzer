@@ -3,6 +3,7 @@ app.py — Streamlit UI (한국·미국 주식/ETF 펀더멘탈 & 시장환경 �
 """
 
 import os
+import re
 
 import pandas as pd
 import streamlit as st
@@ -225,10 +226,10 @@ with st.sidebar:
         st.divider()
         st.caption(
             "**한국 종목 입력 방법**\n"
-            "- 한글 이름: " + ", ".join(list(KOREAN_STOCK_NAME_MAP.keys())[:5]) + " 등\n"
+            "- 한글 이름: 삼성전자, SK하이닉스, 현대차 등\n"
             "- 6자리 종목코드 (예: 005930 = 삼성전자)\n"
-            "- ETF명: " + ", ".join(KOREAN_ETF_NAME_MAP.keys()) + "\n"
-            "- 그 외 ETF는 종목코드로 입력 (KIND 조회)"
+            "- ETF: KODEX 200, KODEX 레버리지, KODEX 인버스, KODEX 삼성전자레버리지 등\n"
+            "- ⚠️ ETN(상장지수채권)은 yfinance 미지원 — 종목코드로도 조회 불가"
         )
     else:
         _hdr, _logout_col = st.columns([3, 2])
@@ -248,10 +249,10 @@ with st.sidebar:
         st.divider()
         st.caption(
             "**한국 종목 입력 방법**\n"
-            "- 한글 이름: " + ", ".join(list(KOREAN_STOCK_NAME_MAP.keys())[:5]) + " 등\n"
+            "- 한글 이름: 삼성전자, SK하이닉스, 현대차 등\n"
             "- 6자리 종목코드 (예: 005930 = 삼성전자)\n"
-            "- ETF명: " + ", ".join(KOREAN_ETF_NAME_MAP.keys()) + "\n"
-            "- 그 외 ETF는 종목코드로 입력 (KIND 조회)"
+            "- ETF: KODEX 200, KODEX 레버리지, KODEX 인버스, KODEX 삼성전자레버리지 등\n"
+            "- ⚠️ ETN(상장지수채권)은 yfinance 미지원 — 종목코드로도 조회 불가"
         )
         st.divider()
         st.subheader("종합점수 가중치")
@@ -308,7 +309,18 @@ if analyze_btn and ticker_input:
 
             hist = get_price_history(ticker_obj)
             if hist.empty:
-                st.error("가격 데이터를 가져오지 못했습니다. 종목코드/티커를 확인해주세요.")
+                is_kr_input = re.fullmatch(r"\d{6}(\.KS|\.KQ)?", ticker_input.strip(), re.IGNORECASE) \
+                    or any(c in ticker_input for c in "가나다라마바사아자차카타파하")
+                if is_kr_input:
+                    st.error(
+                        f"**'{ticker_input}'** 데이터를 가져오지 못했습니다.\n\n"
+                        "**한국 상품 검색 안내:**\n"
+                        "- 6자리 종목코드로 입력 (예: `279530` = KODEX 삼성전자레버리지)\n"
+                        "- ETN(상장지수채권)은 yfinance 미지원 — KRX 또는 증권사 앱에서 확인하세요\n"
+                        "- 레버리지/인버스 ETF는 `KODEX 레버리지`, `KODEX 인버스` 등 정확한 상품명으로 입력하세요"
+                    )
+                else:
+                    st.error("가격 데이터를 가져오지 못했습니다. 종목코드/티커를 확인해주세요.")
                 st.stop()
 
             # ---- 종목 헤더 ----
