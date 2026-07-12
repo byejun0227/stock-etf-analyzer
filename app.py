@@ -167,12 +167,10 @@ with st.sidebar:
         st.title("🔒 설정")
         st.caption("관리자만 설정을 변경할 수 있습니다.")
         st.divider()
-        with st.form("settings_login_form"):
-            _input_id = st.text_input("아이디", placeholder="관리자 아이디")
-            _input_pw = st.text_input("비밀번호", type="password", placeholder="비밀번호")
-            _login_btn = st.form_submit_button("🔓 로그인", use_container_width=True)
-        if _login_btn:
-            if _input_id.strip() == _admin_id and _input_pw == _admin_pw:
+        _input_id = st.text_input("아이디", placeholder="관리자 아이디", key="login_id")
+        _input_pw = st.text_input("비밀번호", type="password", placeholder="비밀번호", key="login_pw")
+        if st.button("🔓 로그인", use_container_width=True, key="login_btn"):
+            if _input_id.strip() == _admin_id and _input_pw.strip() == _admin_pw:
                 st.session_state.settings_unlocked = True
                 st.rerun()
             else:
