@@ -529,9 +529,11 @@ VALUATION_METRIC_INFO = {
 }
 
 
-def extract_valuation_metrics(info: dict) -> dict:
+def extract_valuation_metrics(info: dict, ticker_obj=None) -> dict:
     """yfinance info dict에서 PER/PBR/PSR/EPS/ROE 추출.
-    한국 주식은 priceToBook/trailingEps가 없을 수 있어 bookValue/netIncomeToCommon으로 보완."""
+    한국 주식은 priceToBook/trailingEps가 없을 수 있어 순차 폴백으로 보완:
+      PBR: priceToBook → bookValue/price → balance_sheet 자기자본/발행주식수
+      EPS: trailingEps → netIncomeToCommon/sharesOutstanding"""
     def _safe(val, mult=1.0):
         try:
             return round(float(val) * mult, 2) if val is not None else None
@@ -551,6 +553,25 @@ def extract_valuation_metrics(info: dict) -> dict:
                     pbr = round(float(price) / bvps_f, 2)
             except (TypeError, ValueError):
                 pass
+
+    # balance_sheet 폴백: 자기자본 ÷ 발행주식수
+    if pbr is None and ticker_obj is not None:
+        try:
+            bs = ticker_obj.balance_sheet
+            if bs is not None and not bs.empty:
+                equity = None
+                for row_name in ("Stockholders Equity", "Total Equity", "Common Stock Equity"):
+                    if row_name in bs.index:
+                        equity = float(bs.loc[row_name].iloc[0])
+                        break
+                shares = info.get("sharesOutstanding")
+                price = info.get("currentPrice") or info.get("regularMarketPrice")
+                if equity and shares and price and float(shares) > 0:
+                    bvps_calc = equity / float(shares)
+                    if bvps_calc > 0:
+                        pbr = round(float(price) / bvps_calc, 2)
+        except Exception:
+            pass
 
     eps = _safe(info.get("trailingEps"))
     if eps is None:

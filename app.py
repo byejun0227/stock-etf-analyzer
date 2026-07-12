@@ -447,7 +447,7 @@ if analyze_btn and ticker_input:
 
                 # 밸류에이션 비교
                 st.markdown("### 📊 밸류에이션 멀티플 비교 — PER / PBR / PSR / EPS / ROE")
-                main_metrics = extract_valuation_metrics(info)
+                main_metrics = extract_valuation_metrics(info, ticker_obj=ticker_obj)
                 peers_raw = get_peer_info_list(info, resolved_ticker, max_peers=5)
                 peers_data_v = [
                     {"ticker": p["ticker"], "metrics": extract_valuation_metrics(p["info"])}
