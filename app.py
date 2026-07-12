@@ -25,6 +25,7 @@ import plotly.graph_objects as go
 
 from analysis import (
     KOREAN_ETF_NAME_MAP,
+    KOREAN_STOCK_NAME_MAP,
     VALUATION_METRIC_INFO,
     analyze_internal_factors,
     analyze_financial_ratios,
@@ -78,8 +79,9 @@ with st.sidebar:
     st.divider()
     st.caption(
         "**한국 종목 입력 방법**\n"
+        "- 한글 이름 직접 입력: " + ", ".join(list(KOREAN_STOCK_NAME_MAP.keys())[:5]) + " 등\n"
         "- 6자리 종목코드 직접 입력 (예: 005930 = 삼성전자)\n"
-        "- 지원되는 ETF명 직접 입력: " + ", ".join(KOREAN_ETF_NAME_MAP.keys()) + "\n"
+        "- 지원되는 ETF명: " + ", ".join(KOREAN_ETF_NAME_MAP.keys()) + "\n"
         "- 그 외 ETF명은 종목코드로 입력해주세요 (한국거래소 KIND에서 조회 가능)"
     )
     st.divider()

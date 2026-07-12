@@ -99,9 +99,20 @@ def get_peer_info_list(info: dict, resolved_ticker: str, max_peers: int = 5) -> 
 def get_price_history(ticker_obj, years: int = 5) -> pd.DataFrame:
     end = datetime.today()
     start = end - timedelta(days=365 * years)
-    hist = ticker_obj.history(start=start, end=end)
+    try:
+        hist = ticker_obj.history(start=start, end=end)
+    except Exception:
+        hist = pd.DataFrame()
     if hist.empty:
-        hist = ticker_obj.history(period=f"{years}y")
+        try:
+            hist = ticker_obj.history(period=f"{years}y")
+        except Exception:
+            hist = pd.DataFrame()
+    if hist.empty:
+        try:
+            hist = ticker_obj.history(period="max")
+        except Exception:
+            hist = pd.DataFrame()
     return hist
 
 

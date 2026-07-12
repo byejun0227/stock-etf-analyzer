@@ -22,6 +22,30 @@ KOREAN_ETF_NAME_MAP = {
     "TIGER 반도체TOP10": "396500",
 }
 
+# 한국 개별주식 한글 이름 -> 종목코드 매핑 (결과에 .KS 자동 추가)
+KOREAN_STOCK_NAME_MAP = {
+    "삼성전자": "005930",
+    "SK하이닉스": "000660",
+    "LG에너지솔루션": "373220",
+    "삼성바이오로직스": "207940",
+    "현대차": "005380",
+    "기아": "000270",
+    "셀트리온": "068270",
+    "NAVER": "035420",
+    "네이버": "035420",
+    "카카오": "035720",
+    "포스코홀딩스": "005490",
+    "KB금융": "105560",
+    "신한지주": "055550",
+    "하나금융지주": "086790",
+    "LG화학": "051910",
+    "삼성SDI": "006400",
+    "현대모비스": "012330",
+    "삼성물산": "028260",
+    "SK이노베이션": "096770",
+    "LG전자": "066570",
+}
+
 # 미국 주식 한글 이름 -> 티커 매핑
 KOREAN_US_STOCK_NAME_MAP = {
     "엔비디아": "NVDA",
@@ -73,6 +97,9 @@ def normalize_ticker_input(user_input: str) -> str:
 
     if raw in KOREAN_ETF_NAME_MAP:
         return KOREAN_ETF_NAME_MAP[raw] + ".KS"
+
+    if raw in KOREAN_STOCK_NAME_MAP:
+        return KOREAN_STOCK_NAME_MAP[raw] + ".KS"
 
     if raw in KOREAN_US_STOCK_NAME_MAP:
         return KOREAN_US_STOCK_NAME_MAP[raw]
