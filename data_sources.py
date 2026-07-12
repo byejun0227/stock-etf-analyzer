@@ -247,18 +247,142 @@ def analyze_capital_market_policy() -> dict:
     return result
 
 
-def analyze_market_environment(fred_api_key: str) -> dict:
-    """시장환경 4개 항목 종합"""
-    results = {}
-    if fred_api_key:
-        results["경기동향"] = analyze_business_cycle(fred_api_key)
-        results["통화_재정정책"] = analyze_monetary_fiscal_policy(fred_api_key)
-        results["지정학_불확실성"] = analyze_geopolitical_risk(fred_api_key)
-    else:
-        no_key_msg = {"안내": "FRED API 키가 없어 조회할 수 없습니다. 사이드바에 키를 입력해주세요."}
-        results["경기동향"] = no_key_msg
-        results["통화_재정정책"] = no_key_msg
-        results["지정학_불확실성"] = no_key_msg
+def analyze_business_cycle_kr(api_key: str) -> dict:
+    """경기동향 (한국): KOSPI 6개월 추이 + 한국 실업률"""
+    result = {}
+    try:
+        kospi = yf.Ticker("^KS11").history(period="1y")["Close"].dropna()
+        if len(kospi) < 2:
+            raise ValueError("KOSPI 데이터 부족")
+        latest_k = kospi.iloc[-1]
+        half_yr = kospi.iloc[max(-126, -len(kospi))]
+        kospi_trend = "개선" if latest_k > half_yr else "악화"
+        kospi_chg = (latest_k / half_yr - 1) * 100
 
-    results["자본시장_정책"] = analyze_capital_market_policy()
+        unrate_trend, kr_latest, kr_prev = "N/A", None, None
+        if api_key:
+            try:
+                unrate_kr = fetch_fred_series("LRHUTTTTKSM156S", api_key)
+                kr_latest = unrate_kr.iloc[-1]
+                kr_prev = unrate_kr.iloc[-6] if len(unrate_kr) >= 6 else unrate_kr.iloc[0]
+                unrate_trend = "하락(개선)" if kr_latest < kr_prev else "상승(악화)"
+            except Exception:
+                pass
+
+        if kospi_trend == "개선":
+            judgement = "경기활황(성장기대감)" if unrate_trend != "상승(악화)" else "혼재(지표간 상충)"
+        elif kospi_trend == "악화":
+            judgement = "경기불황(불확실성)" if unrate_trend != "하락(개선)" else "혼재(지표간 상충)"
+        else:
+            judgement = "혼재(지표간 상충 - 추가 확인 필요)"
+
+        result["판정"] = judgement
+        result["KOSPI 추이(6개월)"] = f"{half_yr:,.0f} → {latest_k:,.0f} ({kospi_trend}, {kospi_chg:+.1f}%)"
+        if kr_latest is not None:
+            result["실업률 추이(%)"] = f"{kr_prev:.2f} → {kr_latest:.2f} ({unrate_trend})"
+        result["참고"] = "KOSPI는 경기 선행 경향이 있으나 외국인 수급·환율 등 단기 변동 요인도 영향을 줍니다."
+    except Exception as e:
+        result["오류"] = f"데이터 조회 실패: {e}"
+    return result
+
+
+def analyze_monetary_fiscal_policy_kr(api_key: str) -> dict:
+    """통화/재정정책 (한국): 한국은행 기준금리 + M2"""
+    result = {}
+    try:
+        bok = fetch_fred_series("IRSTCB01KRM156N", api_key)
+        bok_latest = bok.iloc[-1]
+        bok_prev = bok.iloc[-6] if len(bok) >= 6 else bok.iloc[0]
+        rate_dir = "긴축(금리 인상 기조)" if bok_latest > bok_prev else \
+                   "완화(금리 인하 기조)" if bok_latest < bok_prev else "동결(변화 없음)"
+
+        m2_yoy = None
+        try:
+            m2_kr = fetch_fred_series("MYAGKRM052S", api_key)
+            if len(m2_kr) >= 13:
+                m2_yoy = (m2_kr.iloc[-1] / m2_kr.iloc[-13] - 1) * 100
+        except Exception:
+            pass
+
+        result["판정"] = rate_dir
+        result["한국 기준금리(%)"] = f"{bok_prev:.2f} → {bok_latest:.2f}"
+        if m2_yoy is not None:
+            result["한국 M2 증가율(YoY,%)"] = round(m2_yoy, 2)
+    except Exception as e:
+        result["오류"] = f"FRED 데이터 조회 실패: {e}"
+    return result
+
+
+def analyze_geopolitical_risk_kr(api_key: str) -> dict:
+    """지정학적 불확실성 (한국): 글로벌 EPU + 한국 특수 리스크 안내"""
+    result = {}
+    try:
+        epu = fetch_fred_series("USEPUINDXD", api_key)
+        epu_monthly = epu.resample("ME").mean()
+        latest = epu_monthly.iloc[-1]
+        baseline = epu_monthly.iloc[-37:-1].mean() if len(epu_monthly) >= 37 else epu_monthly.mean()
+
+        judgement = "위험발생(불확실성 확대)" if latest > baseline * 1.15 else \
+                    "위험해소(불확실성 완화)" if latest < baseline * 0.85 else "평이한 수준"
+
+        result["판정"] = judgement
+        result["글로벌 EPU 지수"] = round(latest, 1)
+        result["3년 평균 대비"] = f"{round((latest / baseline - 1) * 100, 1)}%"
+        result["참고"] = "한국 전용 지정학 지수가 제한적이어서 글로벌(미국) EPU를 대리 지표로 사용합니다. 북한 리스크 등 한국 특수 요인은 뉴스 모니터링 병행 권장"
+    except Exception as e:
+        result["오류"] = f"FRED 데이터 조회 실패: {e}"
+    return result
+
+
+def analyze_capital_market_policy_kr() -> dict:
+    """자본시장 정책 변화 (한국): VKOSPI → 실패 시 KOSPI 변동성"""
+    result = {}
+    try:
+        index_name = "VKOSPI"
+        vol_data = yf.Ticker("^VKOSPI").history(period="3mo")["Close"].dropna()
+        if vol_data.empty:
+            raise ValueError("VKOSPI 데이터 없음")
+    except Exception:
+        try:
+            kospi = yf.Ticker("^KS11").history(period="1y")["Close"].dropna()
+            ret = kospi.pct_change().dropna()
+            vol_data = (ret.rolling(20).std() * (252 ** 0.5) * 100).dropna()
+            index_name = "KOSPI 변동성(20일, 연환산%)"
+        except Exception as e:
+            result["오류"] = f"변동성 데이터 조회 실패: {e}"
+            return result
+
+    try:
+        latest = vol_data.iloc[-1]
+        month_ago = vol_data.iloc[-21] if len(vol_data) >= 21 else vol_data.iloc[0]
+        direction = "부정적(변동성 확대)" if latest > month_ago * 1.1 else \
+                    "긍정적(변동성 축소)" if latest < month_ago * 0.9 else "중립"
+        result["판정"] = direction
+        result[f"{index_name} 추이"] = f"{month_ago:.2f} → {latest:.2f}"
+        result["참고"] = f"{index_name}는 시장 불안감의 간접 프록시입니다. 실제 자본시장 정책(공매도 규제, 세제 등)은 뉴스 확인 필요"
+    except Exception as e:
+        result["오류"] = f"데이터 처리 실패: {e}"
+    return result
+
+
+def analyze_market_environment(fred_api_key: str, market: str = "US") -> dict:
+    """시장환경 4개 항목 종합 (market='KR'이면 한국 지표 사용)"""
+    results = {}
+    no_key_msg = {"안내": "FRED API 키가 없어 조회할 수 없습니다. 사이드바에 키를 입력해주세요."}
+
+    if market == "KR":
+        results["경기동향"] = analyze_business_cycle_kr(fred_api_key)
+        results["통화_재정정책"] = analyze_monetary_fiscal_policy_kr(fred_api_key) if fred_api_key else no_key_msg
+        results["지정학_불확실성"] = analyze_geopolitical_risk_kr(fred_api_key) if fred_api_key else no_key_msg
+        results["자본시장_정책"] = analyze_capital_market_policy_kr()
+    else:
+        if fred_api_key:
+            results["경기동향"] = analyze_business_cycle(fred_api_key)
+            results["통화_재정정책"] = analyze_monetary_fiscal_policy(fred_api_key)
+            results["지정학_불확실성"] = analyze_geopolitical_risk(fred_api_key)
+        else:
+            results["경기동향"] = no_key_msg
+            results["통화_재정정책"] = no_key_msg
+            results["지정학_불확실성"] = no_key_msg
+        results["자본시장_정책"] = analyze_capital_market_policy()
     return results
