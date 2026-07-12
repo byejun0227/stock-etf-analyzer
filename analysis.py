@@ -86,6 +86,16 @@ def normalize_ticker_input(user_input: str) -> str:
 # =========================================================
 # 2. 펀더멘탈 분석 (원본 데이터 -> 사람이 읽는 요약)
 # =========================================================
+def _ts_dict(series: pd.Series) -> dict:
+    """pandas Series(Timestamp 인덱스)를 st.json 호환 dict로 변환 (키를 'YYYY-MM-DD' 문자열로)"""
+    return {
+        k.strftime("%Y-%m-%d") if hasattr(k, "strftime") else str(k): (
+            None if pd.isna(v) else round(float(v), 4)
+        )
+        for k, v in series.items()
+    }
+
+
 def analyze_internal_factors(balance: pd.DataFrame, income: pd.DataFrame, cashflow: pd.DataFrame) -> dict:
     """① 자산/부채, 매출/비용/수익/현금흐름, 재무구조 추이"""
     results = {}
@@ -94,19 +104,19 @@ def analyze_internal_factors(balance: pd.DataFrame, income: pd.DataFrame, cashfl
         total_assets = balance.loc["Total Assets"]
         total_liab = balance.loc["Total Liabilities Net Minority Interest"]
         debt_ratio = (total_liab / total_assets * 100).round(2)
-        results["부채비율_추이(%)"] = debt_ratio.to_dict()
+        results["부채비율_추이(%)"] = _ts_dict(debt_ratio)
     except Exception:
         results["부채비율_추이(%)"] = "데이터 없음"
 
     try:
         revenue = income.loc["Total Revenue"]
-        results["매출_추이"] = revenue.to_dict()
+        results["매출_추이"] = _ts_dict(revenue)
     except Exception:
         results["매출_추이"] = "데이터 없음"
 
     try:
         ocf = cashflow.loc["Operating Cash Flow"]
-        results["영업현금흐름_추이"] = ocf.to_dict()
+        results["영업현금흐름_추이"] = _ts_dict(ocf)
     except Exception:
         results["영업현금흐름_추이"] = "데이터 없음"
 
@@ -121,7 +131,7 @@ def analyze_financial_ratios(income: pd.DataFrame) -> dict:
         revenue = income.loc["Total Revenue"]
         op_income = income.loc["Operating Income"]
         op_margin = (op_income / revenue * 100).round(2)
-        results["영업이익률(%)"] = op_margin.to_dict()
+        results["영업이익률(%)"] = _ts_dict(op_margin)
     except Exception:
         results["영업이익률(%)"] = "데이터 없음"
 
@@ -129,14 +139,14 @@ def analyze_financial_ratios(income: pd.DataFrame) -> dict:
         ebit = income.loc["EBIT"] if "EBIT" in income.index else income.loc["Operating Income"]
         interest_exp = income.loc["Interest Expense"]
         interest_coverage = (ebit / interest_exp.abs()).round(2)
-        results["이자보상비율(배)"] = interest_coverage.to_dict()
+        results["이자보상비율(배)"] = _ts_dict(interest_coverage)
     except Exception:
         results["이자보상비율(배)"] = "데이터 없음 (무차입 기업이거나 항목 미제공)"
 
     try:
         revenue = income.loc["Total Revenue"]
         growth = revenue.pct_change(-1) * 100  # yfinance는 최근->과거 순서
-        results["매출증가율(%)"] = growth.round(2).to_dict()
+        results["매출증가율(%)"] = _ts_dict(growth.round(2))
     except Exception:
         results["매출증가율(%)"] = "데이터 없음"
 
