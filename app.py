@@ -138,14 +138,20 @@ def render_market_detail(data: dict):
 # =========================================================
 # 기본값 (로그인 여부와 무관하게 항상 정의)
 # =========================================================
-try:
-    _default_fred_key = st.secrets.get("FRED_API_KEY", os.environ.get("FRED_API_KEY", ""))
-    _admin_id = st.secrets.get("ADMIN_ID", "admin")
-    _admin_pw = st.secrets.get("ADMIN_PW", "admin1234")
-except Exception:
-    _default_fred_key = os.environ.get("FRED_API_KEY", "")
-    _admin_id = "admin"
-    _admin_pw = "admin1234"
+def _load_secret(key: str, default: str = "") -> str:
+    """st.secrets → os.environ → default 순으로 조회. 타입·공백 안전."""
+    try:
+        v = st.secrets[key]
+        if v is not None:
+            return str(v).strip()
+    except Exception:
+        pass
+    v = os.environ.get(key, "")
+    return v.strip() if v else default
+
+_default_fred_key = _load_secret("FRED_API_KEY", "")
+_admin_id = _load_secret("ADMIN_ID", "admin")
+_admin_pw = _load_secret("ADMIN_PW", "admin1234")
 
 fred_api_key = _default_fred_key
 fundamental_weight_pct = 60
@@ -166,7 +172,7 @@ with st.sidebar:
             _input_pw = st.text_input("비밀번호", type="password", placeholder="비밀번호")
             _login_btn = st.form_submit_button("🔓 로그인", use_container_width=True)
         if _login_btn:
-            if _input_id == _admin_id and _input_pw == _admin_pw:
+            if _input_id.strip() == _admin_id and _input_pw == _admin_pw:
                 st.session_state.settings_unlocked = True
                 st.rerun()
             else:
