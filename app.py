@@ -97,6 +97,44 @@ def kv_cards(score_detail: dict, ncols: int = 3):
             col.metric(f"{icon} {label}", vs[:55] if len(vs) > 55 else vs)
 
 
+def render_ts_detail(data: dict):
+    """내부요인/재무지표 추이 dict를 연도별 테이블로 시각화"""
+    series_cols = {}
+    no_data = []
+    for key, val in data.items():
+        if isinstance(val, dict) and val:
+            series_cols[key] = val
+        else:
+            no_data.append(f"**{key}**: {val}")
+    if series_cols:
+        combined = pd.DataFrame(series_cols)
+        combined.index.name = "날짜"
+        combined = combined.sort_index(ascending=False)
+        st.dataframe(
+            combined.style.format("{:,.2f}", na_rep="N/A"),
+            use_container_width=True,
+        )
+    for msg in no_data:
+        st.caption(msg)
+
+
+def render_market_detail(data: dict):
+    """시장환경 항목 dict를 구조화해서 표시"""
+    for key, val in data.items():
+        if key == "판정":
+            continue
+        elif key == "참고":
+            st.info(f"ℹ️ {val}")
+        elif key == "오류":
+            st.error(f"⚠️ 데이터 조회 실패: {val}")
+        elif key == "안내":
+            st.warning(val)
+        else:
+            c1, c2 = st.columns([2, 3])
+            c1.markdown(f"**{key}**")
+            c2.markdown(str(val))
+
+
 # =========================================================
 # 사이드바
 # =========================================================
@@ -296,16 +334,16 @@ if analyze_btn and ticker_input:
                 # ① 기업 내부요인
                 section_header("①", "기업 내부요인 평가", internal_score)
                 kv_cards(internal_score_detail)
-                with st.expander("추이 원시 데이터"):
-                    st.json(internal, expanded=False)
+                with st.expander("📂 추이 원시 데이터 (연도별)"):
+                    render_ts_detail(internal)
 
                 st.markdown("")
 
                 # ② 재무지표
                 section_header("②", "재무지표 평가", ratios_score)
                 kv_cards(ratios_score_detail)
-                with st.expander("재무지표 원시 데이터"):
-                    st.json(ratios, expanded=False)
+                with st.expander("📂 재무지표 원시 데이터 (연도별)"):
+                    render_ts_detail(ratios)
 
                 st.markdown("")
 
@@ -337,9 +375,14 @@ if analyze_btn and ticker_input:
                         if "➖" in val: return "background-color:#e9ecef;color:#495057"
                         return ""
 
+                    numeric_cols = [c for c in avail_cols if c not in ("설명", "평가")]
+                    for nc in numeric_cols:
+                        df_val[nc] = pd.to_numeric(df_val[nc], errors="coerce")
                     styled_val = df_val[avail_cols].style
                     if "평가" in avail_cols:
                         styled_val = styled_val.applymap(_color_eval, subset=["평가"])
+                    if numeric_cols:
+                        styled_val = styled_val.format("{:.2f}", subset=numeric_cols, na_rep="N/A")
                     st.dataframe(styled_val, use_container_width=True)
 
                     if peer_list:
@@ -442,8 +485,8 @@ if analyze_btn and ticker_input:
 
             st.markdown("")
             for key, label in MARKET_LABELS.items():
-                with st.expander(label):
-                    st.write(market.get(key, {}))
+                with st.expander(f"🔍 {label}"):
+                    render_market_detail(market.get(key, {}))
 
         except Exception as e:
             st.error(f"분석 중 오류가 발생했습니다: {e}")
