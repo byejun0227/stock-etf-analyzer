@@ -16,11 +16,41 @@ import numpy as np
 # =========================================================
 # 한국 ETF 이름 -> 종목코드 매핑
 # =========================================================
-# 직접 검색으로 검증된 항목만 등재. 여기 없는 종목은 6자리 종목코드를 직접 입력하세요.
 KOREAN_ETF_NAME_MAP = {
     "KODEX 200": "069500",
     "TIGER 200": "102110",
     "TIGER 반도체TOP10": "396500",
+}
+
+# 미국 주식 한글 이름 -> 티커 매핑
+KOREAN_US_STOCK_NAME_MAP = {
+    "엔비디아": "NVDA",
+    "애플": "AAPL",
+    "테슬라": "TSLA",
+    "마이크로소프트": "MSFT",
+    "구글": "GOOGL",
+    "알파벳": "GOOGL",
+    "아마존": "AMZN",
+    "메타": "META",
+    "넷플릭스": "NFLX",
+    "인텔": "INTC",
+    "AMD": "AMD",
+    "에이엠디": "AMD",
+    "브로드컴": "AVGO",
+    "TSMC": "TSM",
+    "퀄컴": "QCOM",
+    "마이크론": "MU",
+    "팔란티어": "PLTR",
+    "스타벅스": "SBUX",
+    "코카콜라": "KO",
+    "존슨앤존슨": "JNJ",
+    "버크셔해서웨이": "BRK-B",
+    "JP모건": "JPM",
+    "골드만삭스": "GS",
+    "SPY": "SPY",
+    "QQQ": "QQQ",
+    "VOO": "VOO",
+    "VTI": "VTI",
 }
 
 
@@ -31,6 +61,7 @@ def normalize_ticker_input(user_input: str) -> str:
     """사용자 입력을 yfinance가 이해하는 티커 표기로 정규화.
     - 이미 .KS/.KQ가 붙어 있으면 그대로 사용
     - 한국 ETF 이름(매핑 테이블에 있는 경우) -> 종목코드.KS로 변환
+    - 미국 주식 한글 이름(매핑 테이블에 있는 경우) -> 티커로 변환
     - 6자리 숫자면 한국 종목코드로 간주하고 .KS로 변환 (실패 시 호출부에서 .KQ 재시도)
     - 그 외에는 미국 티커로 간주하고 대문자로 반환
     """
@@ -42,6 +73,9 @@ def normalize_ticker_input(user_input: str) -> str:
 
     if raw in KOREAN_ETF_NAME_MAP:
         return KOREAN_ETF_NAME_MAP[raw] + ".KS"
+
+    if raw in KOREAN_US_STOCK_NAME_MAP:
+        return KOREAN_US_STOCK_NAME_MAP[raw]
 
     if re.fullmatch(r"\d{6}", raw):
         return raw + ".KS"

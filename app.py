@@ -101,7 +101,7 @@ with st.sidebar:
         }
 
 ticker_input = st.text_input(
-    "티커 또는 종목코드를 입력하세요 (예: AAPL, SPY, 005930, KODEX 200)", value="AAPL"
+    "티커 또는 종목코드를 입력하세요 (예: AAPL, SPY, 005930, KODEX 200, 엔비디아, 테슬라)", value="AAPL"
 ).strip()
 
 
