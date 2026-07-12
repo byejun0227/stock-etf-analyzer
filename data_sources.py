@@ -61,7 +61,10 @@ def classify_ticker(ticker: str):
 def get_price_history(ticker_obj, years: int = 5) -> pd.DataFrame:
     end = datetime.today()
     start = end - timedelta(days=365 * years)
-    return ticker_obj.history(start=start, end=end)
+    hist = ticker_obj.history(start=start, end=end)
+    if hist.empty:
+        hist = ticker_obj.history(period=f"{years}y")
+    return hist
 
 
 def get_financials(ticker_obj):
