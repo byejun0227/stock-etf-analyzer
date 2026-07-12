@@ -228,8 +228,8 @@ with st.sidebar:
             "**한국 종목 입력 방법**\n"
             "- 한글 이름: 삼성전자, SK하이닉스, 현대차 등\n"
             "- 6자리 종목코드 (예: 005930 = 삼성전자)\n"
-            "- ETF: KODEX 200, KODEX 레버리지, KODEX 인버스, KODEX 삼성전자레버리지 등\n"
-            "- ⚠️ ETN(상장지수채권)은 yfinance 미지원 — 종목코드로도 조회 불가"
+            "- ETF: KODEX 200, KODEX 레버리지, KODEX 인버스, TIGER 레버리지 등\n"
+            "- ⚠️ 삼성전자 레버리지 등 ETN 상품은 yfinance 미지원 — 조회 불가"
         )
     else:
         _hdr, _logout_col = st.columns([3, 2])
@@ -251,8 +251,8 @@ with st.sidebar:
             "**한국 종목 입력 방법**\n"
             "- 한글 이름: 삼성전자, SK하이닉스, 현대차 등\n"
             "- 6자리 종목코드 (예: 005930 = 삼성전자)\n"
-            "- ETF: KODEX 200, KODEX 레버리지, KODEX 인버스, KODEX 삼성전자레버리지 등\n"
-            "- ⚠️ ETN(상장지수채권)은 yfinance 미지원 — 종목코드로도 조회 불가"
+            "- ETF: KODEX 200, KODEX 레버리지, KODEX 인버스, TIGER 레버리지 등\n"
+            "- ⚠️ 삼성전자 레버리지 등 ETN 상품은 yfinance 미지원 — 조회 불가"
         )
         st.divider()
         st.subheader("종합점수 가중치")
