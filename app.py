@@ -175,11 +175,19 @@ with st.sidebar:
                 st.rerun()
             else:
                 st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
-                _dbg_id = f"로드됨(길이{len(_admin_id)})" if _admin_id != "admin" else "기본값(admin)"
-                _dbg_pw = f"로드됨(길이{len(_admin_pw)})" if _admin_pw != "admin1234" else "기본값(admin1234)"
-                _dbg_inp_id = f"입력길이{len(_input_id.strip())}"
-                _dbg_inp_pw = f"입력길이{len(_input_pw.strip())}"
-                st.caption(f"🔍 진단 — 저장된: ID={_dbg_id}, PW={_dbg_pw} / 입력된: ID={_dbg_inp_id}, PW={_dbg_inp_pw}")
+                try:
+                    _all_keys = list(st.secrets.keys())
+                except Exception:
+                    _all_keys = ["secrets 접근 불가"]
+                try:
+                    _pw_raw = st.secrets["ADMIN_PW"]
+                    _pw_diag = f"있음(길이{len(str(_pw_raw))})"
+                except KeyError:
+                    _pw_diag = "KeyError — 키 없음"
+                except Exception as _e:
+                    _pw_diag = f"오류: {type(_e).__name__}"
+                st.caption(f"🔍 Secrets 키 목록: {_all_keys}")
+                st.caption(f"🔍 ADMIN_PW 직접조회: {_pw_diag} / 입력길이: {len(_input_pw.strip())}")
         st.divider()
         st.caption(
             "**한국 종목 입력 방법**\n"
