@@ -12,7 +12,7 @@ import ResultView from "@/components/ResultView";
 interface User {
   name: string;
   email: string;
-  provider: "google" | "kakao" | "admin";
+  provider: "google" | "kakao" | "admin" | "local";
   isAdmin: boolean;
 }
 

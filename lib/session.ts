@@ -2,7 +2,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 
 export interface SessionUser {
-  provider: "google" | "kakao" | "admin";
+  provider: "google" | "kakao" | "admin" | "local";
   email: string;
   name: string;
   isAdmin: boolean;

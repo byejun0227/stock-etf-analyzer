@@ -6,7 +6,7 @@ import type { MarketWeights } from "@/lib/types";
 interface User {
   name: string;
   email: string;
-  provider: "google" | "kakao" | "admin";
+  provider: "google" | "kakao" | "admin" | "local";
   isAdmin: boolean;
 }
 
@@ -24,6 +24,7 @@ const PROVIDER_ICON: Record<User["provider"], string> = {
   google: "🔵",
   kakao: "💛",
   admin: "🔑",
+  local: "✉️",
 };
 
 export default function Sidebar({
