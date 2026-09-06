@@ -16,17 +16,15 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 import requests
-import requests as _requests
 import yfinance as yf
 
 from _lib.analysis import normalize_ticker_input, summarize_etf_fundamentals
 
-_YF_SESSION = _requests.Session()
-_YF_SESSION.headers['User-Agent'] = (
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-    'AppleWebKit/537.36 (KHTML, like Gecko) '
-    'Chrome/120.0.0.0 Safari/537.36'
-)
+# yfinance now requires a curl_cffi session internally (Yahoo's anti-bot TLS
+# fingerprinting) and rejects a plain requests.Session passed via `session=`
+# with "Yahoo API requires curl_cffi session not <class
+# 'requests.sessions.Session'>". Let yfinance manage its own session instead
+# of passing one — do not reintroduce a custom `session=` argument here.
 
 # 거래소 suffix → (시장코드, 통화) 매핑
 SUFFIX_MARKET_INFO: dict[str, tuple[str, str]] = {
@@ -66,7 +64,7 @@ def _safe_info(symbol: str, max_retries: int = 3) -> dict:
     """yfinance .info를 가져오되, Rate Limit 에러 시 최대 max_retries회 재시도."""
     for attempt in range(max_retries):
         try:
-            info = yf.Ticker(symbol, session=_YF_SESSION).info or {}
+            info = yf.Ticker(symbol).info or {}
             return info
         except Exception as e:
             msg = str(e).lower()
@@ -108,14 +106,14 @@ def classify_ticker(ticker: str):
     market, default_currency = _detect_market_currency(normalized)
     is_kr = market == "KR"
 
-    t = yf.Ticker(normalized, session=_YF_SESSION)
+    t = yf.Ticker(normalized)
     info = _safe_info(normalized)
 
     # 한국 종목: .KS 실패 시 .KQ 재시도
     if is_kr and (not info or info.get("regularMarketPrice") is None):
         if normalized.upper().endswith(".KS"):
             alt = normalized[:-3] + ".KQ"
-            t_alt = yf.Ticker(alt, session=_YF_SESSION)
+            t_alt = yf.Ticker(alt)
             info_alt = _safe_info(alt)
             if info_alt and info_alt.get("regularMarketPrice") is not None:
                 t, info, normalized = t_alt, info_alt, alt
@@ -325,7 +323,7 @@ def analyze_capital_market_policy() -> dict:
     """자본시장 정책 변화: 주가에 긍정적 vs 부정적 (VIX를 간접 프록시로 사용)"""
     result = {}
     try:
-        vix = yf.Ticker("^VIX", session=_YF_SESSION).history(period="3mo")["Close"]
+        vix = yf.Ticker("^VIX").history(period="3mo")["Close"]
         latest = vix.iloc[-1]
         month_ago = vix.iloc[-21] if len(vix) >= 21 else vix.iloc[0]
         direction = "부정적(변동성 확대)" if latest > month_ago * 1.1 else \
@@ -342,7 +340,7 @@ def analyze_business_cycle_kr(api_key: str) -> dict:
     """경기동향 (한국): KOSPI 6개월 추이 + 한국 실업률"""
     result = {}
     try:
-        kospi = yf.Ticker("^KS11", session=_YF_SESSION).history(period="1y")["Close"].dropna()
+        kospi = yf.Ticker("^KS11").history(period="1y")["Close"].dropna()
         if len(kospi) < 2:
             raise ValueError("KOSPI 데이터 부족")
         latest_k = kospi.iloc[-1]
@@ -410,7 +408,7 @@ def analyze_monetary_fiscal_policy_kr(api_key: str) -> dict:
     else:
         # 모든 FRED 시리즈 실패 → KODEX 국고채10년 ETF를 대리 지표로 사용
         try:
-            bond = yf.Ticker("195930.KS", session=_YF_SESSION).history(period="1y")["Close"].dropna()
+            bond = yf.Ticker("195930.KS").history(period="1y")["Close"].dropna()
             if bond.empty:
                 raise ValueError("채권 ETF 데이터 없음")
             b_latest = bond.iloc[-1]
@@ -463,12 +461,12 @@ def analyze_capital_market_policy_kr() -> dict:
     result = {}
     try:
         index_name = "VKOSPI"
-        vol_data = yf.Ticker("^VKOSPI", session=_YF_SESSION).history(period="3mo")["Close"].dropna()
+        vol_data = yf.Ticker("^VKOSPI").history(period="3mo")["Close"].dropna()
         if vol_data.empty:
             raise ValueError("VKOSPI 데이터 없음")
     except Exception:
         try:
-            kospi = yf.Ticker("^KS11", session=_YF_SESSION).history(period="1y")["Close"].dropna()
+            kospi = yf.Ticker("^KS11").history(period="1y")["Close"].dropna()
             ret = kospi.pct_change().dropna()
             vol_data = (ret.rolling(20).std() * (252 ** 0.5) * 100).dropna()
             index_name = "KOSPI 변동성(20일, 연환산%)"
