@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from analysis import (
+from _lib.analysis import (
     analyze_financial_ratios,
     analyze_industry,
     analyze_internal_factors,
@@ -35,7 +35,7 @@ from analysis import (
     score_market_item,
     score_technical,
 )
-from data_sources import (
+from _lib.data_sources import (
     analyze_market_environment,
     classify_ticker,
     fetch_etf_raw_data,

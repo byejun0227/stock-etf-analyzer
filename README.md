@@ -14,8 +14,11 @@ components/                  # React UI 컴포넌트
 lib/                        # i18n, 세션(JWT), OAuth URL 빌더, 타입, 상수
 api/
   index.py                    # FastAPI 앱 — POST /api/analyze (Vercel Python Function)
-  analysis.py                 # 순수 계산/점수화 로직 (외부 의존성 없음 → 테스트 대상)
-  data_sources.py              # yfinance/FRED API 등 외부 데이터 수집
+  _lib/
+    analysis.py                 # 순수 계산/점수화 로직 (외부 의존성 없음 → 테스트 대상)
+    data_sources.py              # yfinance/FRED API 등 외부 데이터 수집
+                                 # (api/index.py와 나란히 두면 Vercel이 개별 함수로 오인해
+                                 #  번들에서 누락시키므로 하위 패키지로 분리했습니다)
 test_analysis.py             # analysis.py 단위테스트 (43개, 표준 unittest만 사용)
 requirements.txt             # Python 함수 의존성
 vercel.json                  # Python 함수 설정 (maxDuration 등)

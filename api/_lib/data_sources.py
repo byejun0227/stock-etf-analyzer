@@ -19,7 +19,7 @@ import requests
 import requests as _requests
 import yfinance as yf
 
-from analysis import normalize_ticker_input, summarize_etf_fundamentals
+from _lib.analysis import normalize_ticker_input, summarize_etf_fundamentals
 
 _YF_SESSION = _requests.Session()
 _YF_SESSION.headers['User-Agent'] = (

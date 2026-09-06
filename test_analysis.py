@@ -14,8 +14,8 @@ import unittest
 
 import pandas as pd
 
-# analysis.py는 Vercel Python 함수 번들링을 위해 api/ 아래로 이동했습니다.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "api"))
+# analysis.py는 Vercel Python 함수 번들링을 위해 api/_lib/ 아래로 이동했습니다.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "api", "_lib"))
 
 import analysis
 
