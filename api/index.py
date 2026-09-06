@@ -10,8 +10,14 @@ api/index.py — Vercel Python Function (FastAPI)
 import math
 import os
 import re
+import sys
 import time
 from typing import Any
+
+# Vercel's Python loader (importlib.util.spec_from_file_location) does not add
+# this file's own directory to sys.path, so `from _lib... import` fails at
+# import time unless we add it ourselves first.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import jwt
 import numpy as np
