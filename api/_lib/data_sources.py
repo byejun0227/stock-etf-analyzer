@@ -10,13 +10,70 @@ yfinance, FRED API 등 네트워크 호출이 필요한 함수를 모아둡니�
 """
 
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 import pandas as pd
 import requests
 import yfinance as yf
 
-from analysis import normalize_ticker_input, summarize_etf_fundamentals
+from _lib.analysis import normalize_ticker_input, summarize_etf_fundamentals
+
+# yfinance now requires a curl_cffi session internally (Yahoo's anti-bot TLS
+# fingerprinting) and rejects a plain requests.Session passed via `session=`
+# with "Yahoo API requires curl_cffi session not <class
+# 'requests.sessions.Session'>". Let yfinance manage its own session instead
+# of passing one — do not reintroduce a custom `session=` argument here.
+
+# 거래소 suffix → (시장코드, 통화) 매핑
+SUFFIX_MARKET_INFO: dict[str, tuple[str, str]] = {
+    ".KS": ("KR", "KRW"),
+    ".KQ": ("KR", "KRW"),
+    ".T":  ("JP", "JPY"),
+    ".SS": ("CN", "CNY"),
+    ".SZ": ("CN", "CNY"),
+    ".HK": ("HK", "HKD"),
+    ".TW": ("TW", "TWD"),
+    ".NS": ("IN", "INR"),
+    ".BO": ("IN", "INR"),
+    ".DE": ("DE", "EUR"),
+    ".L":  ("UK", "GBP"),
+    ".PA": ("FR", "EUR"),
+    ".MI": ("IT", "EUR"),
+    ".AS": ("NL", "EUR"),
+    ".SW": ("CH", "CHF"),
+    ".BR": ("BE", "EUR"),
+    ".MC": ("ES", "EUR"),
+    ".OL": ("NO", "NOK"),
+    ".ST": ("SE", "SEK"),
+    ".LS": ("PT", "EUR"),
+}
+
+
+def _detect_market_currency(ticker: str) -> tuple[str, str]:
+    """티커 suffix로 시장코드와 기본 통화를 반환. suffix 없으면 미국(USD)."""
+    upper = ticker.upper()
+    for suffix, (mkt, cur) in SUFFIX_MARKET_INFO.items():
+        if upper.endswith(suffix):
+            return mkt, cur
+    return "US", "USD"
+
+
+def _safe_info(symbol: str, max_retries: int = 3) -> dict:
+    """yfinance .info를 가져오되, Rate Limit 에러 시 최대 max_retries회 재시도."""
+    for attempt in range(max_retries):
+        try:
+            info = yf.Ticker(symbol).info or {}
+            return info
+        except Exception as e:
+            msg = str(e).lower()
+            if "rate limit" in msg or "too many requests" in msg or "429" in msg:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+            return {}
+    return {}
 
 FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
@@ -40,25 +97,31 @@ SECTOR_PEERS = {
 # 1. 종목 판별 (한국/미국 시장 자동 감지)
 # =========================================================
 def classify_ticker(ticker: str):
-    """티커를 조회해서 시장(한국/미국)과 유형(ETF/개별주식)을 판별.
-    한국 종목코드의 경우 .KS(코스피) 조회가 실패하면 .KQ(코스닥)로 재시도."""
+    """티커를 조회해서 시장·통화·유형(ETF/개별주식)을 판별.
+
+    - 한국 .KS 조회 실패 시 .KQ로 재시도
+    - 글로벌 suffix(.T/.HK/.DE 등) 자동 감지
+    """
     normalized = normalize_ticker_input(ticker)
-    is_korean_code = re.fullmatch(r"\d{6}\.(KS|KQ)", normalized) is not None
+    market, default_currency = _detect_market_currency(normalized)
+    is_kr = market == "KR"
 
     t = yf.Ticker(normalized)
-    info = t.info
+    info = _safe_info(normalized)
 
-    if is_korean_code and (not info or info.get("regularMarketPrice") is None):
-        alt = normalized.replace(".KS", ".KQ")
-        t_alt = yf.Ticker(alt)
-        info_alt = t_alt.info
-        if info_alt and info_alt.get("regularMarketPrice") is not None:
-            t, info, normalized = t_alt, info_alt, alt
+    # 한국 종목: .KS 실패 시 .KQ 재시도
+    if is_kr and (not info or info.get("regularMarketPrice") is None):
+        if normalized.upper().endswith(".KS"):
+            alt = normalized[:-3] + ".KQ"
+            t_alt = yf.Ticker(alt)
+            info_alt = _safe_info(alt)
+            if info_alt and info_alt.get("regularMarketPrice") is not None:
+                t, info, normalized = t_alt, info_alt, alt
+                market, default_currency = "KR", "KRW"
 
     quote_type = info.get("quoteType", "").upper()
     is_etf = quote_type == "ETF"
-    market = "KR" if normalized.upper().endswith((".KS", ".KQ")) else "US"
-    currency = info.get("currency", "USD" if market == "US" else "KRW")
+    currency = info.get("currency") or default_currency
 
     return {
         "is_etf": is_etf,
@@ -74,7 +137,11 @@ def classify_ticker(ticker: str):
 # 2. 가격/재무 데이터 수집
 # =========================================================
 def get_peer_info_list(info: dict, resolved_ticker: str, max_peers: int = 5) -> list:
-    """업종 기반으로 경쟁사 최대 max_peers개 선정 후 yfinance info 반환.
+    """업종 기반으로 경쟁사 최대 max_peers개 선정 후 yfinance info 반환 (병렬 조회).
+
+    Vercel 서버리스 함수의 실행시간 예산 안에 들어오도록 순차 sleep 대신
+    ThreadPoolExecutor로 후보들을 동시에 조회한다. 실패 대비 여유분(+3)을 포함해
+    조회하고, 완료 순서와 무관하게 원래 후보 순서를 유지해 반환한다.
     returns: [{"ticker": "AAPL", "info": {...}}, ...]"""
     sector = info.get("sector", "")
     pool = SECTOR_PEERS.get(sector, [])
@@ -82,17 +149,26 @@ def get_peer_info_list(info: dict, resolved_ticker: str, max_peers: int = 5) -> 
     # 현재 종목 풀에서 제외
     base = resolved_ticker.split(".")[0].upper()
     pool = [t for t in pool if t.upper() != base]
+    candidates = pool[: max_peers + 3]
+    if not candidates:
+        return []
 
     result = []
-    for sym in pool:
-        if len(result) >= max_peers:
-            break
-        try:
-            peer_info = yf.Ticker(sym).info
+    with ThreadPoolExecutor(max_workers=min(4, len(candidates))) as executor:
+        future_to_sym = {executor.submit(_safe_info, sym): sym for sym in candidates}
+        for future in as_completed(future_to_sym):
+            if len(result) >= max_peers:
+                break
+            sym = future_to_sym[future]
+            try:
+                peer_info = future.result()
+            except Exception:
+                continue
             if peer_info and peer_info.get("regularMarketPrice") is not None:
                 result.append({"ticker": sym, "info": peer_info})
-        except Exception:
-            continue
+
+    order = {sym: i for i, sym in enumerate(candidates)}
+    result.sort(key=lambda r: order.get(r["ticker"], len(order)))
     return result
 
 
@@ -118,7 +194,20 @@ def get_price_history(ticker_obj, years: int = 5) -> pd.DataFrame:
 
 def get_financials(ticker_obj):
     """연간 재무제표 반환 (yfinance는 최근 4개년 정도만 제공)"""
-    return ticker_obj.financials, ticker_obj.balance_sheet, ticker_obj.cashflow
+    empty = pd.DataFrame()
+    try:
+        financials = ticker_obj.financials
+    except Exception:
+        financials = empty
+    try:
+        balance = ticker_obj.balance_sheet
+    except Exception:
+        balance = empty
+    try:
+        cashflow = ticker_obj.cashflow
+    except Exception:
+        cashflow = empty
+    return financials, balance, cashflow
 
 
 def fetch_etf_raw_data(ticker_obj, info: dict) -> dict:
@@ -399,7 +488,12 @@ def analyze_capital_market_policy_kr() -> dict:
 
 
 def analyze_market_environment(fred_api_key: str, market: str = "US") -> dict:
-    """시장환경 4개 항목 종합 (market='KR'이면 한국 지표 사용)"""
+    """시장환경 4개 항목 종합.
+
+    market='KR' → 한국 지표 사용
+    market='US'  → 미국 지표 사용
+    그 외(JP/CN/HK/TW/IN/DE/UK/FR/NL/IT/CH 등) → 미국 지표 대리 사용 + 안내 메시지
+    """
     results = {}
     no_key_msg = {"안내": "FRED API 키가 없어 조회할 수 없습니다. 사이드바에 키를 입력해주세요."}
 
@@ -409,6 +503,7 @@ def analyze_market_environment(fred_api_key: str, market: str = "US") -> dict:
         results["지정학_불확실성"] = analyze_geopolitical_risk_kr(fred_api_key) if fred_api_key else no_key_msg
         results["자본시장_정책"] = analyze_capital_market_policy_kr()
     else:
+        # US 포함 모든 비-KR 시장 → 미국 지표 사용
         if fred_api_key:
             results["경기동향"] = analyze_business_cycle(fred_api_key)
             results["통화_재정정책"] = analyze_monetary_fiscal_policy(fred_api_key)
@@ -418,4 +513,13 @@ def analyze_market_environment(fred_api_key: str, market: str = "US") -> dict:
             results["통화_재정정책"] = no_key_msg
             results["지정학_불확실성"] = no_key_msg
         results["자본시장_정책"] = analyze_capital_market_policy()
+
+        # 미국 외 시장: 프록시 안내 메시지 추가
+        if market != "US":
+            proxy_note = f"🌐 {market} 시장 전용 지표 미지원 — 미국 지표를 대리 표시합니다"
+            for key in results:
+                if isinstance(results[key], dict) and "안내" not in results[key]:
+                    existing = results[key].get("참고", "")
+                    results[key]["참고"] = (proxy_note + " / " + existing) if existing else proxy_note
+
     return results

@@ -14,8 +14,18 @@ build/
 venv/
 env/
 
-# Streamlit secrets (민감한 키 절대 커밋 금지)
-.streamlit/secrets.toml
+# Node / Next.js
+node_modules/
+.next/
+out/
+next-env.d.ts
+
+# Vercel
+.vercel/
+
+# Environment variables (민감한 키 절대 커밋 금지)
+.env
+.env*.local
 
 # IDE
 .vscode/

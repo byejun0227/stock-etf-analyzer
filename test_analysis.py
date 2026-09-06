@@ -8,8 +8,14 @@ test_analysis.py — analysis.py 순수 로직에 대한 단위테스트
     python -m unittest test_analysis.py -v
 """
 
+import os
+import sys
 import unittest
+
 import pandas as pd
+
+# analysis.py는 Vercel Python 함수 번들링을 위해 api/_lib/ 아래로 이동했습니다.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "api", "_lib"))
 
 import analysis
 
