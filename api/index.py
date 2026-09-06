@@ -8,13 +8,15 @@ api/index.py — Vercel Python Function (FastAPI)
 """
 
 import math
+import os
 import re
 import time
 from typing import Any
 
+import jwt
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -79,6 +81,25 @@ class AnalyzeRequest(BaseModel):
     fredApiKey: str = ""
     fundamentalWeightPct: float = 60
     marketWeights: MarketWeights = MarketWeights()
+
+
+def _is_authorized(request: Request) -> bool:
+    """lib/session.ts가 발급하는 세션 쿠키(JWT, HS256)를 검증.
+
+    프론트엔드 page.tsx의 로그인 게이트와 동일한 인증을 이 엔드포인트에도
+    적용해, 로그인 없이 직접 POST /api/analyze를 호출하는 것을 막는다.
+    """
+    secret = os.environ.get("SESSION_SECRET")
+    if not secret:
+        return False
+    token = request.cookies.get("session")
+    if not token:
+        return False
+    try:
+        jwt.decode(token, secret, algorithms=["HS256"])
+        return True
+    except jwt.PyJWTError:
+        return False
 
 
 def _is_kr_input(raw: str) -> bool:
@@ -168,7 +189,10 @@ def _gather_market(fred_api_key: str, market_type: str):
 
 
 @app.post("/api/analyze")
-def analyze(req: AnalyzeRequest):
+def analyze(req: AnalyzeRequest, request: Request):
+    if not _is_authorized(request):
+        return JSONResponse(status_code=401, content={"error": "login required", "kind": "unknown"})
+
     ticker_input = req.ticker.strip()
     if not ticker_input:
         return JSONResponse(status_code=400, content={"error": "ticker is required", "kind": "unknown"})
