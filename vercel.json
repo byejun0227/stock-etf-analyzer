@@ -5,5 +5,9 @@
       "maxDuration": 60,
       "excludeFiles": "{__pycache__/**,*.pyc}"
     }
-  }
+  },
+  "rewrites": [
+    { "source": "/api/analyze", "destination": "/api/index.py" },
+    { "source": "/api/health", "destination": "/api/index.py" }
+  ]
 }
