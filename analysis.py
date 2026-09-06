@@ -42,6 +42,15 @@ KOREAN_ETF_NAME_MAP = {
     "TIGER 헬스케어":        "143860",
     "KODEX 금융":            "139270",
     "TIGER 은행":            "091170",
+    # ── 단일종목 레버리지 ETF ─────────────────────────
+    "KODEX SK하이닉스 레버리지":           "0193T0",
+    "KODEX SK 하이닉스 레버리지":          "0193T0",
+    "KODEX SK하이닉스단일종목레버리지":    "0193T0",
+    "KODEX SK하이닉스 단일종목레버리지":   "0193T0",
+    "KODEX 삼성전자 레버리지":             "0193W0",
+    "KODEX 삼성전자레버리지":              "0193W0",
+    "KODEX 삼성전자단일종목레버리지":      "0193W0",
+    "KODEX 삼성전자 단일종목레버리지":     "0193W0",
     # ── 채권·배당 ETF ──────────────────────────────────
     "KODEX 국고채10년":      "195930",
     "TIGER 국채3년":         "114260",
@@ -71,6 +80,168 @@ KOREAN_STOCK_NAME_MAP = {
     "삼성물산": "028260",
     "SK이노베이션": "096770",
     "LG전자": "066570",
+}
+
+# =========================================================
+# 글로벌 주식 이름 -> 티커 매핑 (한글 이름 지원)
+# =========================================================
+
+# 일본 주식 (.T — 도쿄거래소)
+JAPAN_STOCK_NAME_MAP: dict[str, str] = {
+    "도요타":           "7203.T",
+    "토요타":           "7203.T",
+    "소니":             "6758.T",
+    "닌텐도":           "7974.T",
+    "소프트뱅크":       "9984.T",
+    "혼다":             "7267.T",
+    "미쓰비시UFJ":      "8306.T",
+    "미쓰비시 UFJ":     "8306.T",
+    "유니클로":         "9983.T",
+    "패스트리테일링":   "9983.T",
+    "키엔스":           "6861.T",
+    "TDK":              "6762.T",
+    "무라타":           "6981.T",
+    "히타치":           "6501.T",
+    "파나소닉":         "6752.T",
+    "NTT":              "9432.T",
+    "도쿄일렉트론":     "8035.T",
+    "신에츠화학":       "4063.T",
+    "다이킨":           "6367.T",
+    "후지쓰":           "6702.T",
+    "오므론":           "6645.T",
+    "야마하":           "7951.T",
+}
+
+# 중국 주식 (.SS = 상하이, .SZ = 선전)
+CHINA_STOCK_NAME_MAP: dict[str, str] = {
+    "마오타이":         "600519.SS",
+    "구이저우마오타이": "600519.SS",
+    "BYD중국":          "002594.SZ",
+    "비야디":           "002594.SZ",
+    "CATL":             "300750.SZ",
+    "녕덕시대":         "300750.SZ",
+    "닝더스다이":       "300750.SZ",
+    "중국공상은행":     "601398.SS",
+    "공상은행":         "601398.SS",
+    "핑안보험":         "601318.SS",
+    "중국건설은행":     "601939.SS",
+    "농업은행":         "601288.SS",
+    "초상은행":         "600036.SS",
+    "중국석유":         "601857.SS",
+    "우량예":           "000858.SZ",
+    "항서제약":         "600276.SS",
+    "중국인수보험":     "601628.SS",
+    "오량액":           "000858.SZ",
+    "메이디":           "000333.SZ",
+    "격력전기":         "000651.SZ",
+    "비야디전자":       "002594.SZ",
+}
+
+# 홍콩 주식 (.HK)
+HK_STOCK_NAME_MAP: dict[str, str] = {
+    "텐센트":           "0700.HK",
+    "알리바바홍콩":     "9988.HK",
+    "HSBC홍콩":         "0005.HK",
+    "AIA":              "1299.HK",
+    "미투안":           "3690.HK",
+    "메이퇀":           "3690.HK",
+    "샤오미":           "1810.HK",
+    "넷이즈홍콩":       "9999.HK",
+    "바이두홍콩":       "9888.HK",
+    "징동홍콩":         "9618.HK",
+    "JD닷컴홍콩":       "9618.HK",
+    "차이나모바일":     "0941.HK",
+    "BYD홍콩":          "0285.HK",
+    "헝셩그룹":         "0011.HK",
+    "차이나평안":       "2318.HK",
+    "BOC홍콩":          "2388.HK",
+}
+
+# 대만 주식 (.TW — 대만거래소)
+TAIWAN_STOCK_NAME_MAP: dict[str, str] = {
+    "TSMC대만":         "2330.TW",
+    "대만TSMC":         "2330.TW",
+    "미디어텍":         "2454.TW",
+    "폭스콘대만":       "2317.TW",
+    "ASUS대만":         "2357.TW",
+    "에이수스":         "2357.TW",
+    "에이서":           "2353.TW",
+    "델타전자":         "2308.TW",
+    "난야테크":         "2408.TW",
+    "유나이티드마이크로": "2303.TW",
+    "UMC대만":          "2303.TW",
+    "ASE테크":          "3711.TW",
+    "위스트론":         "3231.TW",
+}
+
+# 인도 주식 (.NS — NSE 국립증권거래소)
+INDIA_STOCK_NAME_MAP: dict[str, str] = {
+    "릴라이언스":       "RELIANCE.NS",
+    "TCS인도":          "TCS.NS",
+    "인포시스인도":     "INFY.NS",
+    "HDFC뱅크":         "HDFCBANK.NS",
+    "위프로":           "WIPRO.NS",
+    "HCL테크":          "HCLTECH.NS",
+    "ICICI뱅크":        "ICICIBANK.NS",
+    "힌두스탄유니레버": "HINDUNILVR.NS",
+    "바르티에어텔":     "BHARTIARTL.NS",
+    "ITC인도":          "ITC.NS",
+    "마루티스즈키":     "MARUTI.NS",
+    "NTPC":             "NTPC.NS",
+    "코탁뱅크":         "KOTAKBANK.NS",
+    "액시스뱅크":       "AXISBANK.NS",
+    "타타컨설턴시":     "TCS.NS",
+    "타타모터스":       "TATAMOTORS.NS",
+    "타타스틸":         "TATASTEEL.NS",
+    "선파마":           "SUNPHARMA.NS",
+}
+
+# 유럽 주식 (독일 .DE / 영국 .L / 프랑스 .PA / 네덜란드 .AS / 스위스 .SW)
+EUROPE_STOCK_NAME_MAP: dict[str, str] = {
+    # 독일 (.DE)  — 미국 ADR과 중복되는 순수 영문 티커는 제외
+    "SAP독일":          "SAP.DE",
+    "폭스바겐":         "VOW3.DE",
+    "BMW":              "BMW.DE",
+    "메르세데스":       "MBG.DE",
+    "지멘스":           "SIE.DE",
+    "바이엘":           "BAYN.DE",
+    "바스프":           "BAS.DE",
+    "알리안츠":         "ALV.DE",
+    "아디다스":         "ADS.DE",
+    "도이체방크":       "DBK.DE",
+    "인피니언":         "IFX.DE",
+    "뮌헨재보험":       "MUV2.DE",
+    # 영국 (.L)  — BP·GSK·ARM 등 뉴욕 상장 종목은 영문 티커 제외
+    "쉘영국":           "SHEL.L",
+    "BP영국":           "BP.L",
+    "아스트라제네카":   "AZN.L",
+    "GSK영국":          "GSK.L",
+    "유니레버영국":     "ULVR.L",
+    "HSBC영국":         "HSBA.L",
+    "리오틴토영국":     "RIO.L",
+    "ARM영국":          "ARM.L",
+    "버클레이즈":       "BARC.L",
+    "보다폰":           "VOD.L",
+    # 프랑스 (.PA)
+    "LVMH":             "MC.PA",
+    "에르메스":         "RMS.PA",
+    "로레알":           "OR.PA",
+    "에어버스":         "AIR.PA",
+    "토탈에너지":       "TTE.PA",
+    "BNP파리바":        "BNP.PA",
+    "사노피":           "SAN.PA",
+    "케링":             "KER.PA",
+    # 네덜란드 (.AS)  — ASML은 NASDAQ·Euronext 양쪽 상장 → 명시적으로 구분
+    "ASML암스테르담":   "ASML.AS",
+    "INGA":             "INGA.AS",
+    "하이네켄":         "HEIA.AS",
+    "필립스":           "PHIA.AS",
+    # 스위스 (.SW)
+    "네슬레":           "NESN.SW",
+    "노바티스":         "NOVN.SW",
+    "로슈":             "ROG.SW",
+    "ABB스위스":        "ABBN.SW",
+    "취리히보험":       "ZURN.SW",
 }
 
 # 미국 주식 한글 이름 -> 티커 매핑
@@ -137,34 +308,78 @@ KOREAN_US_STOCK_NAME_MAP = {
 }
 
 
+# 지원하는 글로벌 거래소 suffix 목록 (대문자 기준)
+KNOWN_MARKET_SUFFIXES: frozenset[str] = frozenset({
+    ".KS", ".KQ",                          # 한국
+    ".T",                                   # 일본
+    ".SS", ".SZ",                           # 중국
+    ".HK",                                  # 홍콩
+    ".TW",                                  # 대만
+    ".NS", ".BO",                           # 인도
+    ".DE", ".L", ".PA", ".MI", ".AS",      # 유럽 (독일/영국/프랑스/이탈리아/네덜란드)
+    ".SW",                                  # 스위스
+    ".BR", ".MC", ".OL", ".ST", ".LS",     # 기타 유럽
+})
+
+# 국제 이름 맵 통합 목록 (순서대로 탐색)
+_INT_NAME_MAPS: list[dict[str, str]] = [
+    JAPAN_STOCK_NAME_MAP,
+    CHINA_STOCK_NAME_MAP,
+    HK_STOCK_NAME_MAP,
+    TAIWAN_STOCK_NAME_MAP,
+    INDIA_STOCK_NAME_MAP,
+    EUROPE_STOCK_NAME_MAP,
+]
+
+
 # =========================================================
 # 1. 티커 정규화
 # =========================================================
 def normalize_ticker_input(user_input: str) -> str:
     """사용자 입력을 yfinance가 이해하는 티커 표기로 정규화.
-    - 이미 .KS/.KQ가 붙어 있으면 그대로 사용
-    - 한국 ETF 이름(매핑 테이블에 있는 경우) -> 종목코드.KS로 변환
-    - 미국 주식 한글 이름(매핑 테이블에 있는 경우) -> 티커로 변환
-    - 6자리 숫자면 한국 종목코드로 간주하고 .KS로 변환 (실패 시 호출부에서 .KQ 재시도)
-    - 그 외에는 미국 티커로 간주하고 대문자로 반환
+
+    처리 순서:
+    1. 알려진 거래소 suffix가 이미 있으면 대문자로 반환
+    2. 한국 ETF 이름 → 종목코드.KS
+    3. 한국 개별주식 한글 이름 → 종목코드.KS
+    4. 미국 주식 한글/영문 약칭 → 티커
+    5. 일본/중국/홍콩/대만/인도/유럽 한글 이름 → 해당 티커
+    6. 6자리 숫자 → 한국 종목코드.KS
+    7. 숫자시작 6자리 영숫자 → 한국 신규 ETF 코드.KS
+    8. 그 외 → 미국 티커로 간주(대문자)
     """
     raw = (user_input or "").strip()
     upper = raw.upper()
 
-    if upper.endswith(".KS") or upper.endswith(".KQ"):
-        return upper
+    # 1. 알려진 거래소 suffix 있으면 대문자로 반환
+    for suffix in KNOWN_MARKET_SUFFIXES:
+        if upper.endswith(suffix):
+            return upper
 
+    # 2. 한국 ETF 이름
     if raw in KOREAN_ETF_NAME_MAP:
         return KOREAN_ETF_NAME_MAP[raw] + ".KS"
 
+    # 3. 한국 개별주식 이름
     if raw in KOREAN_STOCK_NAME_MAP:
         return KOREAN_STOCK_NAME_MAP[raw] + ".KS"
 
+    # 4. 미국 주식 한글/약칭
     if raw in KOREAN_US_STOCK_NAME_MAP:
         return KOREAN_US_STOCK_NAME_MAP[raw]
 
+    # 5. 국제 주식 한글 이름 (일본/중국/홍콩/대만/인도/유럽)
+    for name_map in _INT_NAME_MAPS:
+        if raw in name_map:
+            return name_map[raw]
+
+    # 6. 6자리 숫자 → 한국 종목코드
     if re.fullmatch(r"\d{6}", raw):
         return raw + ".KS"
+
+    # 7. 숫자로 시작하는 6자리 영숫자 (예: 0193T0) — 한국 신규 ETF 코드
+    if re.fullmatch(r"\d[0-9A-Za-z]{5}", raw):
+        return raw.upper() + ".KS"
 
     return upper
 

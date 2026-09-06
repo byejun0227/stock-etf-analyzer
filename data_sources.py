@@ -10,13 +10,71 @@ yfinance, FRED API 등 네트워크 호출이 필요한 함수를 모아둡니�
 """
 
 import re
+import time
 from datetime import datetime, timedelta
 
 import pandas as pd
 import requests
+import requests as _requests
 import yfinance as yf
 
 from analysis import normalize_ticker_input, summarize_etf_fundamentals
+
+_YF_SESSION = _requests.Session()
+_YF_SESSION.headers['User-Agent'] = (
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+    'AppleWebKit/537.36 (KHTML, like Gecko) '
+    'Chrome/120.0.0.0 Safari/537.36'
+)
+
+# 거래소 suffix → (시장코드, 통화) 매핑
+SUFFIX_MARKET_INFO: dict[str, tuple[str, str]] = {
+    ".KS": ("KR", "KRW"),
+    ".KQ": ("KR", "KRW"),
+    ".T":  ("JP", "JPY"),
+    ".SS": ("CN", "CNY"),
+    ".SZ": ("CN", "CNY"),
+    ".HK": ("HK", "HKD"),
+    ".TW": ("TW", "TWD"),
+    ".NS": ("IN", "INR"),
+    ".BO": ("IN", "INR"),
+    ".DE": ("DE", "EUR"),
+    ".L":  ("UK", "GBP"),
+    ".PA": ("FR", "EUR"),
+    ".MI": ("IT", "EUR"),
+    ".AS": ("NL", "EUR"),
+    ".SW": ("CH", "CHF"),
+    ".BR": ("BE", "EUR"),
+    ".MC": ("ES", "EUR"),
+    ".OL": ("NO", "NOK"),
+    ".ST": ("SE", "SEK"),
+    ".LS": ("PT", "EUR"),
+}
+
+
+def _detect_market_currency(ticker: str) -> tuple[str, str]:
+    """티커 suffix로 시장코드와 기본 통화를 반환. suffix 없으면 미국(USD)."""
+    upper = ticker.upper()
+    for suffix, (mkt, cur) in SUFFIX_MARKET_INFO.items():
+        if upper.endswith(suffix):
+            return mkt, cur
+    return "US", "USD"
+
+
+def _safe_info(symbol: str, max_retries: int = 3) -> dict:
+    """yfinance .info를 가져오되, Rate Limit 에러 시 최대 max_retries회 재시도."""
+    for attempt in range(max_retries):
+        try:
+            info = yf.Ticker(symbol, session=_YF_SESSION).info or {}
+            return info
+        except Exception as e:
+            msg = str(e).lower()
+            if "rate limit" in msg or "too many requests" in msg or "429" in msg:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+            return {}
+    return {}
 
 FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 
@@ -40,25 +98,31 @@ SECTOR_PEERS = {
 # 1. 종목 판별 (한국/미국 시장 자동 감지)
 # =========================================================
 def classify_ticker(ticker: str):
-    """티커를 조회해서 시장(한국/미국)과 유형(ETF/개별주식)을 판별.
-    한국 종목코드의 경우 .KS(코스피) 조회가 실패하면 .KQ(코스닥)로 재시도."""
+    """티커를 조회해서 시장·통화·유형(ETF/개별주식)을 판별.
+
+    - 한국 .KS 조회 실패 시 .KQ로 재시도
+    - 글로벌 suffix(.T/.HK/.DE 등) 자동 감지
+    """
     normalized = normalize_ticker_input(ticker)
-    is_korean_code = re.fullmatch(r"\d{6}\.(KS|KQ)", normalized) is not None
+    market, default_currency = _detect_market_currency(normalized)
+    is_kr = market == "KR"
 
-    t = yf.Ticker(normalized)
-    info = t.info
+    t = yf.Ticker(normalized, session=_YF_SESSION)
+    info = _safe_info(normalized)
 
-    if is_korean_code and (not info or info.get("regularMarketPrice") is None):
-        alt = normalized.replace(".KS", ".KQ")
-        t_alt = yf.Ticker(alt)
-        info_alt = t_alt.info
-        if info_alt and info_alt.get("regularMarketPrice") is not None:
-            t, info, normalized = t_alt, info_alt, alt
+    # 한국 종목: .KS 실패 시 .KQ 재시도
+    if is_kr and (not info or info.get("regularMarketPrice") is None):
+        if normalized.upper().endswith(".KS"):
+            alt = normalized[:-3] + ".KQ"
+            t_alt = yf.Ticker(alt, session=_YF_SESSION)
+            info_alt = _safe_info(alt)
+            if info_alt and info_alt.get("regularMarketPrice") is not None:
+                t, info, normalized = t_alt, info_alt, alt
+                market, default_currency = "KR", "KRW"
 
     quote_type = info.get("quoteType", "").upper()
     is_etf = quote_type == "ETF"
-    market = "KR" if normalized.upper().endswith((".KS", ".KQ")) else "US"
-    currency = info.get("currency", "USD" if market == "US" else "KRW")
+    currency = info.get("currency") or default_currency
 
     return {
         "is_etf": is_etf,
@@ -87,12 +151,10 @@ def get_peer_info_list(info: dict, resolved_ticker: str, max_peers: int = 5) -> 
     for sym in pool:
         if len(result) >= max_peers:
             break
-        try:
-            peer_info = yf.Ticker(sym).info
-            if peer_info and peer_info.get("regularMarketPrice") is not None:
-                result.append({"ticker": sym, "info": peer_info})
-        except Exception:
-            continue
+        time.sleep(0.4)
+        peer_info = _safe_info(sym)
+        if peer_info and peer_info.get("regularMarketPrice") is not None:
+            result.append({"ticker": sym, "info": peer_info})
     return result
 
 
@@ -118,7 +180,20 @@ def get_price_history(ticker_obj, years: int = 5) -> pd.DataFrame:
 
 def get_financials(ticker_obj):
     """연간 재무제표 반환 (yfinance는 최근 4개년 정도만 제공)"""
-    return ticker_obj.financials, ticker_obj.balance_sheet, ticker_obj.cashflow
+    empty = pd.DataFrame()
+    try:
+        financials = ticker_obj.financials
+    except Exception:
+        financials = empty
+    try:
+        balance = ticker_obj.balance_sheet
+    except Exception:
+        balance = empty
+    try:
+        cashflow = ticker_obj.cashflow
+    except Exception:
+        cashflow = empty
+    return financials, balance, cashflow
 
 
 def fetch_etf_raw_data(ticker_obj, info: dict) -> dict:
@@ -234,7 +309,7 @@ def analyze_capital_market_policy() -> dict:
     """자본시장 정책 변화: 주가에 긍정적 vs 부정적 (VIX를 간접 프록시로 사용)"""
     result = {}
     try:
-        vix = yf.Ticker("^VIX").history(period="3mo")["Close"]
+        vix = yf.Ticker("^VIX", session=_YF_SESSION).history(period="3mo")["Close"]
         latest = vix.iloc[-1]
         month_ago = vix.iloc[-21] if len(vix) >= 21 else vix.iloc[0]
         direction = "부정적(변동성 확대)" if latest > month_ago * 1.1 else \
@@ -251,7 +326,7 @@ def analyze_business_cycle_kr(api_key: str) -> dict:
     """경기동향 (한국): KOSPI 6개월 추이 + 한국 실업률"""
     result = {}
     try:
-        kospi = yf.Ticker("^KS11").history(period="1y")["Close"].dropna()
+        kospi = yf.Ticker("^KS11", session=_YF_SESSION).history(period="1y")["Close"].dropna()
         if len(kospi) < 2:
             raise ValueError("KOSPI 데이터 부족")
         latest_k = kospi.iloc[-1]
@@ -319,7 +394,7 @@ def analyze_monetary_fiscal_policy_kr(api_key: str) -> dict:
     else:
         # 모든 FRED 시리즈 실패 → KODEX 국고채10년 ETF를 대리 지표로 사용
         try:
-            bond = yf.Ticker("195930.KS").history(period="1y")["Close"].dropna()
+            bond = yf.Ticker("195930.KS", session=_YF_SESSION).history(period="1y")["Close"].dropna()
             if bond.empty:
                 raise ValueError("채권 ETF 데이터 없음")
             b_latest = bond.iloc[-1]
@@ -372,12 +447,12 @@ def analyze_capital_market_policy_kr() -> dict:
     result = {}
     try:
         index_name = "VKOSPI"
-        vol_data = yf.Ticker("^VKOSPI").history(period="3mo")["Close"].dropna()
+        vol_data = yf.Ticker("^VKOSPI", session=_YF_SESSION).history(period="3mo")["Close"].dropna()
         if vol_data.empty:
             raise ValueError("VKOSPI 데이터 없음")
     except Exception:
         try:
-            kospi = yf.Ticker("^KS11").history(period="1y")["Close"].dropna()
+            kospi = yf.Ticker("^KS11", session=_YF_SESSION).history(period="1y")["Close"].dropna()
             ret = kospi.pct_change().dropna()
             vol_data = (ret.rolling(20).std() * (252 ** 0.5) * 100).dropna()
             index_name = "KOSPI 변동성(20일, 연환산%)"
@@ -399,7 +474,12 @@ def analyze_capital_market_policy_kr() -> dict:
 
 
 def analyze_market_environment(fred_api_key: str, market: str = "US") -> dict:
-    """시장환경 4개 항목 종합 (market='KR'이면 한국 지표 사용)"""
+    """시장환경 4개 항목 종합.
+
+    market='KR' → 한국 지표 사용
+    market='US'  → 미국 지표 사용
+    그 외(JP/CN/HK/TW/IN/DE/UK/FR/NL/IT/CH 등) → 미국 지표 대리 사용 + 안내 메시지
+    """
     results = {}
     no_key_msg = {"안내": "FRED API 키가 없어 조회할 수 없습니다. 사이드바에 키를 입력해주세요."}
 
@@ -409,6 +489,7 @@ def analyze_market_environment(fred_api_key: str, market: str = "US") -> dict:
         results["지정학_불확실성"] = analyze_geopolitical_risk_kr(fred_api_key) if fred_api_key else no_key_msg
         results["자본시장_정책"] = analyze_capital_market_policy_kr()
     else:
+        # US 포함 모든 비-KR 시장 → 미국 지표 사용
         if fred_api_key:
             results["경기동향"] = analyze_business_cycle(fred_api_key)
             results["통화_재정정책"] = analyze_monetary_fiscal_policy(fred_api_key)
@@ -418,4 +499,13 @@ def analyze_market_environment(fred_api_key: str, market: str = "US") -> dict:
             results["통화_재정정책"] = no_key_msg
             results["지정학_불확실성"] = no_key_msg
         results["자본시장_정책"] = analyze_capital_market_policy()
+
+        # 미국 외 시장: 프록시 안내 메시지 추가
+        if market != "US":
+            proxy_note = f"🌐 {market} 시장 전용 지표 미지원 — 미국 지표를 대리 표시합니다"
+            for key in results:
+                if isinstance(results[key], dict) and "안내" not in results[key]:
+                    existing = results[key].get("참고", "")
+                    results[key]["참고"] = (proxy_note + " / " + existing) if existing else proxy_note
+
     return results

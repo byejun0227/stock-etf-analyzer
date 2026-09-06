@@ -1,15 +1,25 @@
 """
-app.py — Streamlit UI (한국·미국 주식/ETF 펀더멘탈 & 시장환경 분석기)
+app.py — Streamlit UI (한국·미국·글로벌 주식/ETF 펀더멘탈 & 시장환경 분석기)
 """
 
 import os
 import re
+import traceback
 
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from auth import (
+    get_google_auth_url,
+    get_kakao_auth_url,
+    exchange_google_code,
+    exchange_kakao_code,
+    check_admin_login,
+    make_admin_user,
+)
+from i18n import t as _t
 from analysis import (
     KOREAN_ETF_NAME_MAP,
     KOREAN_STOCK_NAME_MAP,
@@ -36,66 +46,187 @@ from data_sources import (
     get_peer_info_list,
     fetch_etf_raw_data,
     analyze_market_environment,
+    _YF_SESSION,
+)
+import yfinance as yf
+
+# =========================================================
+# 페이지 설정 (항상 첫 번째 st 호출)
+# =========================================================
+st.set_page_config(
+    page_title="Global Stock/ETF Analyzer",
+    page_icon="📊",
+    layout="wide",
 )
 
-st.set_page_config(page_title="한국·미국 주식/ETF 분석기", page_icon="📊", layout="wide")
+# =========================================================
+# 언어 초기화 (session_state에 저장)
+# =========================================================
+if "lang" not in st.session_state:
+    st.session_state["lang"] = "ko"
+
+
+def t(key: str) -> str:
+    """현재 세션 언어로 번역."""
+    return _t(key, st.session_state["lang"])
+
+
+# =========================================================
+# OAuth 콜백 처리 (URL query params 확인)
+# 페이지 렌더링 전에 처리해야 함
+# =========================================================
+_qp = st.query_params
+_oauth_code = _qp.get("code", "")
+_oauth_state = _qp.get("state", "")
+
+if _oauth_code and _oauth_state and "user" not in st.session_state:
+    with st.spinner("로그인 처리 중..." if st.session_state["lang"] == "ko" else "Processing login..."):
+        _user = None
+        if _oauth_state == "google":
+            _user = exchange_google_code(_oauth_code)
+        elif _oauth_state == "kakao":
+            _user = exchange_kakao_code(_oauth_code)
+
+        if _user:
+            st.session_state["user"] = _user
+        else:
+            st.session_state["oauth_error"] = True
+
+    st.query_params.clear()
+    st.rerun()
+
+
+# =========================================================
+# 캐시된 데이터 수집 함수
+# =========================================================
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_all(ticker_input: str, fred_key: str):
+    """yfinance/FRED 데이터를 한 번만 가져와 1시간 캐싱."""
+    c = classify_ticker(ticker_input)
+    info = c["info"]
+    ticker_obj = c["ticker_obj"]
+    resolved = c["resolved_ticker"]
+
+    hist = get_price_history(ticker_obj)
+
+    financials = balance = cashflow = None
+    etf_data = None
+    peers_raw = []
+
+    if c["is_etf"]:
+        etf_data = fetch_etf_raw_data(ticker_obj, info)
+    else:
+        financials, balance, cashflow = get_financials(ticker_obj)
+        peers_raw = get_peer_info_list(info, resolved, max_peers=5)
+
+    market = analyze_market_environment(fred_key, market=c["market"])
+
+    return {
+        "info": info,
+        "hist": hist,
+        "is_etf": c["is_etf"],
+        "market_type": c["market"],
+        "currency": c["currency"],
+        "resolved_ticker": resolved,
+        "financials": financials,
+        "balance": balance,
+        "cashflow": cashflow,
+        "etf_data": etf_data,
+        "peers_raw": peers_raw,
+        "market": market,
+    }
+
+
+# =========================================================
+# 글로벌 시장 플래그 & 레이블
+# =========================================================
+MARKET_FLAGS: dict[str, str] = {
+    "KR": "🇰🇷", "US": "🇺🇸",
+    "JP": "🇯🇵", "CN": "🇨🇳", "HK": "🇭🇰",
+    "TW": "🇹🇼", "IN": "🇮🇳",
+    "DE": "🇩🇪", "UK": "🇬🇧", "FR": "🇫🇷",
+    "NL": "🇳🇱", "IT": "🇮🇹", "CH": "🇨🇭",
+    "BE": "🇧🇪", "ES": "🇪🇸", "NO": "🇳🇴", "SE": "🇸🇪",
+}
 
 MARKET_LABELS = {
-    "경기동향": "경기동향 (경기활황 vs 경기불황)",
-    "통화_재정정책": "통화/재정정책 (완화 vs 긴축)",
+    "경기동향":       "경기동향 (경기활황 vs 경기불황)",
+    "통화_재정정책":  "통화/재정정책 (완화 vs 긴축)",
     "지정학_불확실성": "지정학적 불확실성 (위험발생 vs 위험해소)",
-    "자본시장_정책": "자본시장 정책 변화 (긍정 vs 부정)",
+    "자본시장_정책":  "자본시장 정책 변화 (긍정 vs 부정)",
+}
+
+MARKET_LABELS_EN = {
+    "경기동향":       "Business Cycle (Boom vs Recession)",
+    "통화_재정정책":  "Monetary Policy (Easing vs Tightening)",
+    "지정학_불확실성": "Geopolitical Risk (Rising vs Easing)",
+    "자본시장_정책":  "Capital Market Policy (Positive vs Negative)",
 }
 
 MARKET_INDEX_DESC = {
     "US": {
         "경기동향": (
             "**📈 사용 지표 (미국)**\n"
-            "- **USSLIND (미국 경기선행지수)** — Conference Board 발표. 향후 6~12개월 경기 방향을 예측하는 종합 선행지표.\n"
-            "- **UNRATE (실업률)** — 미국 노동시장 건전성 지표. 하락하면 고용 개선(경기 호황), 상승하면 경기 둔화 신호."
+            "- **USSLIND (미국 경기선행지수)** — Conference Board 발표. 향후 6~12개월 경기 방향을 예측.\n"
+            "- **UNRATE (실업률)** — 미국 노동시장 건전성 지표."
         ),
         "통화_재정정책": (
             "**📈 사용 지표 (미국)**\n"
             "- **FEDFUNDS (미국 기준금리)** — 연준(Fed) 단기 정책금리. 인상 시 긴축, 인하 시 완화.\n"
-            "- **M2SL (M2 통화량)** — 광의 통화량. 증가율이 높으면 유동성 확대, 감소하면 긴축 기조."
+            "- **M2SL (M2 통화량)** — 광의 통화량. 증가율이 높으면 유동성 확대."
         ),
         "지정학_불확실성": (
             "**📈 사용 지표 (미국)**\n"
-            "- **USEPUINDXD (경제정책 불확실성 지수, EPU)** — 뉴스 기사 빈도 기반 산출. 높을수록 정치·정책 불확실성 확대. "
-            "실제 지정학 리스크의 직접 지표는 아닌 정책 불확실성 대리 지표."
+            "- **USEPUINDXD (경제정책 불확실성 지수, EPU)** — 뉴스 기사 빈도 기반 산출. 높을수록 불확실성 확대."
         ),
         "자본시장_정책": (
             "**📈 사용 지표 (미국)**\n"
-            "- **VIX (CBOE 변동성 지수)** — S&P 500 옵션 기반 시장 기대 변동성. '공포 지수'. "
-            "20 이하 시장 안정, 30 이상 높은 불안감. 공매도 규제·세제 등 실제 자본시장 정책의 간접 프록시."
+            "- **VIX (CBOE 변동성 지수)** — S&P 500 옵션 기반 공포 지수. 20 이하 안정, 30 이상 불안."
         ),
     },
     "KR": {
         "경기동향": (
             "**📈 사용 지표 (한국)**\n"
-            "- **KOSPI 지수 추이** — 6개월 전 대비 등락으로 경기 방향성 파악. 상승하면 경기 회복 기대, 하락하면 둔화 신호.\n"
-            "- **한국 실업률 (LRHUTTTTKSM156S)** — OECD 기준 조화 실업률. 하락하면 고용 개선(경기 호황), 상승하면 경기 둔화 신호."
+            "- **KOSPI 지수 추이** — 6개월 전 대비 등락으로 경기 방향성 파악.\n"
+            "- **한국 실업률 (LRHUTTTTKSM156S)** — OECD 기준 조화 실업률."
         ),
         "통화_재정정책": (
             "**📈 사용 지표 (한국)**\n"
-            "- **한국 기준금리 (IRSTCB01KRM156N)** — 한국은행(BOK) 정책금리. 인상 시 긴축(대출 억제), 인하 시 완화(유동성 공급).\n"
-            "- **한국 M2 통화량 (MYAGKRM052S)** — 광의 통화량. YoY 증가율이 높으면 유동성 확대, 감소하면 긴축 기조."
+            "- **한국 기준금리 (IRSTCB01KRM156N)** — 한국은행(BOK) 정책금리.\n"
+            "- **한국 M2 통화량 (MYAGKRM052S)** — 광의 통화량 YoY 증가율."
         ),
         "지정학_불확실성": (
             "**📈 사용 지표 (한국)**\n"
-            "- **글로벌 EPU 지수 (USEPUINDXD)** — 한국 전용 지정학 지수가 제한적이어서 글로벌(미국) EPU를 대리 지표로 사용. "
-            "북한 리스크·한반도 긴장 등 한국 특수 지정학 요인은 뉴스 모니터링 병행 권장."
+            "- **글로벌 EPU 지수 (USEPUINDXD)** — 한국 전용 지수 제한으로 글로벌 EPU 대리 사용."
         ),
         "자본시장_정책": (
             "**📈 사용 지표 (한국)**\n"
-            "- **VKOSPI** — 코스피200 옵션 기반 한국판 공포 지수. 데이터 미제공 시 KOSPI 20일 변동성(연환산)으로 대체. "
-            "상승하면 시장 불안 확대, 하락하면 안정. 공매도 규제·세제 등 실제 자본시장 정책의 간접 프록시."
+            "- **VKOSPI** — 코스피200 기반 한국판 공포 지수. 데이터 미제공 시 KOSPI 20일 변동성으로 대체."
+        ),
+    },
+    "DEFAULT": {
+        "경기동향": (
+            "**📈 사용 지표 (미국 대리)**\n"
+            "- 해당 시장 전용 지표가 지원되지 않아 미국 지표(USSLIND, UNRATE)를 대리 표시합니다."
+        ),
+        "통화_재정정책": (
+            "**📈 사용 지표 (미국 대리)**\n"
+            "- 해당 시장 전용 지표가 지원되지 않아 미국 지표(FEDFUNDS, M2SL)를 대리 표시합니다."
+        ),
+        "지정학_불확실성": (
+            "**📈 사용 지표 (미국 대리)**\n"
+            "- 해당 시장 전용 지표가 지원되지 않아 미국 EPU 지수를 대리 표시합니다."
+        ),
+        "자본시장_정책": (
+            "**📈 사용 지표 (미국 대리)**\n"
+            "- 해당 시장 전용 지표가 지원되지 않아 VIX를 대리 표시합니다."
         ),
     },
 }
 
+
 # =========================================================
-# 디자인 헬퍼
+# CSS 스타일
 # =========================================================
 st.markdown("""
 <style>
@@ -106,8 +237,29 @@ st.markdown("""
     padding: 14px 16px;
 }
 div[data-testid="stMetricValue"] { font-size: 1.2rem !important; }
+.login-card {
+    background: #ffffff;
+    border: 1px solid #e9ecef;
+    border-radius: 16px;
+    padding: 32px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+}
 </style>
 """, unsafe_allow_html=True)
+
+
+# =========================================================
+# 유틸 함수
+# =========================================================
+def _load_secret(key: str, default: str = "") -> str:
+    try:
+        v = st.secrets[key]
+        if v is not None:
+            return str(v).strip()
+    except Exception:
+        pass
+    v = os.environ.get(key, "")
+    return v.strip() if v else default
 
 
 def _score_color(s: int) -> str:
@@ -128,7 +280,6 @@ def section_header(num: str, title: str, score: int):
 
 
 def kv_cards(score_detail: dict, ncols: int = 3):
-    """score_detail dict를 카드형 metric으로 시각화"""
     items = [(k, v) for k, v in score_detail.items() if not str(k).startswith("_")]
     for i in range(0, len(items), ncols):
         chunk = items[i:i + ncols]
@@ -146,7 +297,6 @@ def kv_cards(score_detail: dict, ncols: int = 3):
 
 
 def render_ts_detail(data: dict):
-    """내부요인/재무지표 추이 dict를 연도별 테이블로 시각화"""
     series_cols = {}
     no_data = []
     for key, val in data.items():
@@ -167,7 +317,6 @@ def render_ts_detail(data: dict):
 
 
 def render_market_detail(data: dict):
-    """시장환경 항목 dict를 구조화해서 표시"""
     for key, val in data.items():
         if key == "판정":
             continue
@@ -184,85 +333,118 @@ def render_market_detail(data: dict):
 
 
 # =========================================================
-# 기본값 (로그인 여부와 무관하게 항상 정의)
+# 로그인 페이지
 # =========================================================
-def _load_secret(key: str, default: str = "") -> str:
-    """st.secrets → os.environ → default 순으로 조회. 타입·공백 안전."""
-    try:
-        v = st.secrets[key]
-        if v is not None:
-            return str(v).strip()
-    except Exception:
-        pass
-    v = os.environ.get(key, "")
-    return v.strip() if v else default
+def show_login_page():
+    lang = st.session_state["lang"]
 
+    # OAuth 오류 메시지
+    if st.session_state.pop("oauth_error", False):
+        st.error(t("oauth_error"))
+
+    _, center, _ = st.columns([1, 2, 1])
+    with center:
+        st.markdown(f"## 📊 {t('login_title')}")
+        st.caption(t("login_subtitle"))
+        st.markdown("")
+
+        google_url = get_google_auth_url()
+        kakao_url = get_kakao_auth_url()
+
+        if google_url:
+            st.link_button(t("google_login"), google_url, use_container_width=True)
+        else:
+            st.button(t("google_login"), disabled=True,
+                      use_container_width=True, help=t("oauth_not_configured"))
+
+        if kakao_url:
+            st.link_button(t("kakao_login"), kakao_url, use_container_width=True)
+        else:
+            st.button(t("kakao_login"), disabled=True,
+                      use_container_width=True, help=t("oauth_not_configured"))
+
+        st.markdown("---")
+
+        with st.expander(t("admin_login")):
+            _input_id = st.text_input(t("username"), placeholder=t("username"), key="login_id")
+            _input_pw = st.text_input(t("password"), type="password", key="login_pw")
+            if st.button(t("login_btn"), use_container_width=True, key="admin_btn", type="primary"):
+                if check_admin_login(_input_id, _input_pw):
+                    st.session_state["user"] = make_admin_user()
+                    st.rerun()
+                else:
+                    st.error(t("login_error"))
+
+
+# =========================================================
+# 기본값
+# =========================================================
 _default_fred_key = _load_secret("FRED_API_KEY", "")
-_admin_id = _load_secret("ADMIN_ID", "admin")
-_admin_pw = _load_secret("ADMIN_PW", "admin1234")
-
 fred_api_key = _default_fred_key
 fundamental_weight_pct = 60
 market_weights = {"경기동향": 0.25, "통화_재정정책": 0.25, "지정학_불확실성": 0.25, "자본시장_정책": 0.25}
 
+
 # =========================================================
-# 사이드바
+# 상단 언어 스위처 & 로그인 체크
+# =========================================================
+_top_left, _top_right = st.columns([5, 1])
+with _top_left:
+    pass  # 타이틀은 아래에서 렌더링
+with _top_right:
+    _lang_choice = st.radio(
+        t("language"),
+        ["🇰🇷 한국어", "🇺🇸 English"],
+        index=0 if st.session_state["lang"] == "ko" else 1,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="lang_radio",
+    )
+    _new_lang = "ko" if "한국어" in _lang_choice else "en"
+    if _new_lang != st.session_state["lang"]:
+        st.session_state["lang"] = _new_lang
+        st.rerun()
+
+# 로그인 여부 확인
+if "user" not in st.session_state:
+    show_login_page()
+    st.stop()
+
+_user = st.session_state["user"]
+
+
+# =========================================================
+# 사이드바 (로그인 후)
 # =========================================================
 with st.sidebar:
-    _unlocked = st.session_state.get("settings_unlocked", False)
+    # 사용자 정보
+    _provider_icon = {"google": "🔵", "kakao": "💛", "admin": "🔑"}.get(_user["provider"], "👤")
+    st.markdown(f"{_provider_icon} **{_user['name']}**")
+    if _user["email"]:
+        st.caption(_user["email"])
+    if st.button(t("logout_btn"), use_container_width=True):
+        del st.session_state["user"]
+        st.rerun()
+    st.divider()
 
-    if not _unlocked:
-        st.title("🔒 설정")
-        st.caption("관리자만 설정을 변경할 수 있습니다.")
-        st.divider()
-        _input_id = st.text_input("아이디", placeholder="관리자 아이디", key="login_id")
-        _input_pw = st.text_input("비밀번호", type="password", placeholder="비밀번호", key="login_pw")
-        if st.button("🔓 로그인", use_container_width=True, key="login_btn"):
-            if _input_id.strip() == _admin_id and _input_pw.strip() == _admin_pw:
-                st.session_state.settings_unlocked = True
-                st.rerun()
-            else:
-                st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
-        st.divider()
-        st.caption(
-            "**한국 종목 입력 방법**\n"
-            "- 한글 이름: 삼성전자, SK하이닉스, 현대차 등\n"
-            "- 6자리 종목코드 (예: 005930 = 삼성전자)\n"
-            "- ETF: KODEX 200, KODEX 레버리지, KODEX 인버스, TIGER 레버리지 등\n"
-            "- ⚠️ 삼성전자 레버리지 등 ETN 상품은 yfinance 미지원 — 조회 불가"
-        )
-    else:
-        _hdr, _logout_col = st.columns([3, 2])
-        _hdr.markdown("### ⚙️ 설정")
-        if _logout_col.button("로그아웃", use_container_width=True):
-            st.session_state.settings_unlocked = False
-            st.rerun()
-
-        st.success("✅ 관리자 모드")
+    if _user.get("is_admin"):
+        st.success(t("admin_mode"))
         fred_api_key = st.text_input(
-            "FRED API 키",
+            t("fred_api_key"),
             value=_default_fred_key,
             type="password",
-            help="https://fred.stlouisfed.org/docs/api/api_key.html 에서 무료 발급",
+            help=t("fred_help"),
         )
-        st.caption("시장환경 분석(경기동향/통화정책/지정학) 계산에 필요합니다.")
+        st.caption(t("fred_caption"))
         st.divider()
-        st.caption(
-            "**한국 종목 입력 방법**\n"
-            "- 한글 이름: 삼성전자, SK하이닉스, 현대차 등\n"
-            "- 6자리 종목코드 (예: 005930 = 삼성전자)\n"
-            "- ETF: KODEX 200, KODEX 레버리지, KODEX 인버스, TIGER 레버리지 등\n"
-            "- ⚠️ 삼성전자 레버리지 등 ETN 상품은 yfinance 미지원 — 조회 불가"
-        )
-        st.divider()
-        st.subheader("종합점수 가중치")
+        st.subheader(t("score_weights"))
         fundamental_weight_pct = st.slider(
-            "펀더멘탈 vs 시장환경 비중", 0, 100, 60, step=5,
-            help="슬라이더 값이 펀더멘탈 비중(%)입니다. 나머지는 시장환경 비중.",
+            t("fund_vs_market"), 0, 100, 60, step=5,
+            help=t("fund_vs_market_help"),
         )
-        st.caption(f"펀더멘탈 {fundamental_weight_pct}% : 시장환경 {100 - fundamental_weight_pct}%")
-        with st.expander("시장환경 세부 가중치 (선택)"):
-            st.caption("4개 항목의 상대적 중요도 (자동 정규화)")
+        st.caption(f"{t('fund_pct')} {fundamental_weight_pct}% : {t('market_pct')} {100 - fundamental_weight_pct}%")
+        with st.expander(t("market_detail_weights")):
+            st.caption(t("market_weight_auto"))
             w_biz = st.slider("경기동향", 0, 100, 25, key="w_biz")
             w_mon = st.slider("통화/재정정책", 0, 100, 25, key="w_mon")
             w_geo = st.slider("지정학적 불확실성", 0, 100, 25, key="w_geo")
@@ -274,58 +456,59 @@ with st.sidebar:
                 "지정학_불확실성": w_geo / _w_sum,
                 "자본시장_정책": w_cap / _w_sum,
             }
+    else:
+        st.info(t("fred_caption"))
+
+    st.divider()
+    st.caption(t("input_guide"))
 
 
 # =========================================================
 # 메인 헤더 & 입력
 # =========================================================
-st.title("📊 한국·미국 주식/ETF 펀더멘탈 & 시장환경 분석기")
-st.caption("과거 5년 데이터를 기반으로 펀더멘탈 4개 항목 + 시장환경 4개 항목을 평가하는 프로토타입입니다.")
+st.title(f"📊 {t('app_title')}")
+st.caption(t("app_caption"))
 
 col_input, col_btn = st.columns([5, 1])
 with col_input:
     ticker_input = st.text_input(
         "종목 입력",
-        placeholder="예: AAPL, SPY, 005930, KODEX 200, 엔비디아, 삼성전자, 로켓랩",
+        placeholder=t("search_placeholder"),
         label_visibility="collapsed",
     ).strip()
 with col_btn:
-    analyze_btn = st.button("🔍 분석", use_container_width=True, type="primary")
+    analyze_btn = st.button(t("analyze_btn"), use_container_width=True, type="primary")
 
 
 # =========================================================
 # 분석 실행
 # =========================================================
 if analyze_btn and ticker_input:
-    with st.spinner("데이터 수집 및 분석 중..."):
+    with st.spinner(t("analyzing")):
         try:
-            classification = classify_ticker(ticker_input)
-            info = classification["info"]
-            ticker_obj = classification["ticker_obj"]
-            is_etf = classification["is_etf"]
-            market_type = classification["market"]
-            currency = classification["currency"]
-            resolved_ticker = classification["resolved_ticker"]
+            data = _fetch_all(ticker_input, fred_api_key or "")
+            info = data["info"]
+            ticker_obj = yf.Ticker(data["resolved_ticker"], session=_YF_SESSION)
+            is_etf = data["is_etf"]
+            market_type = data["market_type"]
+            currency = data["currency"]
+            resolved_ticker = data["resolved_ticker"]
 
-            hist = get_price_history(ticker_obj)
+            hist = data["hist"]
             if hist.empty:
-                is_kr_input = re.fullmatch(r"\d{6}(\.KS|\.KQ)?", ticker_input.strip(), re.IGNORECASE) \
+                is_kr_input = (
+                    re.fullmatch(r"\d{6}(\.KS|\.KQ)?", ticker_input.strip(), re.IGNORECASE)
                     or any(c in ticker_input for c in "가나다라마바사아자차카타파하")
+                )
                 if is_kr_input:
-                    st.error(
-                        f"**'{ticker_input}'** 데이터를 가져오지 못했습니다.\n\n"
-                        "**한국 상품 검색 안내:**\n"
-                        "- 6자리 종목코드로 입력 (예: `279530` = KODEX 삼성전자레버리지)\n"
-                        "- ETN(상장지수채권)은 yfinance 미지원 — KRX 또는 증권사 앱에서 확인하세요\n"
-                        "- 레버리지/인버스 ETF는 `KODEX 레버리지`, `KODEX 인버스` 등 정확한 상품명으로 입력하세요"
-                    )
+                    st.error(t("no_data_kr").replace("'{ticker_input}'", f"**'{ticker_input}'**"))
                 else:
-                    st.error("가격 데이터를 가져오지 못했습니다. 종목코드/티커를 확인해주세요.")
+                    st.error(t("no_data_generic"))
                 st.stop()
 
             # ---- 종목 헤더 ----
-            market_flag = "🇰🇷" if market_type == "KR" else "🇺🇸"
-            type_label = "ETF" if is_etf else "개별주식"
+            market_flag = MARKET_FLAGS.get(market_type, "🌐")
+            type_label = t("type_etf") if is_etf else t("type_stock")
             cur_price = info.get("currentPrice") or info.get("regularMarketPrice")
             prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
             day_chg = ((cur_price - prev_close) / prev_close * 100) if (cur_price and prev_close) else None
@@ -348,30 +531,37 @@ if analyze_btn and ticker_input:
                         f'<div style="font-size:1.9rem;font-weight:700;line-height:1.2">'
                         f'{fmt} <span style="font-size:1rem;color:#6c757d">{currency}</span></div>'
                         f'<div style="font-size:1rem;font-weight:600;color:{chg_color}">'
-                        f'{chg_str} 전일 대비</div></div>',
+                        f'{chg_str} {t("day_change")}</div></div>',
                         unsafe_allow_html=True,
                     )
 
-            if market_type == "KR" and not is_etf:
-                st.info("ℹ️ 한국 개별주식은 yfinance 재무제표 범위가 제한적입니다. ①② 일부 항목은 DART 원문을 확인하세요.")
+            # 시장별 안내 메시지
             if market_type == "KR":
-                st.caption("🇰🇷 시장환경 분석은 KOSPI·BOK 기준금리·VKOSPI 등 한국 지표를 사용합니다.")
+                if not is_etf:
+                    st.info(t("kr_limited"))
+                st.caption(t("kr_market_note"))
+            elif market_type != "US":
+                st.info(t("global_limited"))
+                st.caption(t("global_market_note"))
 
             # ---- 사전 계산 ----
-            market = analyze_market_environment(fred_api_key, market=market_type)
+            market = data["market"]
             business_cycle_verdict = market.get("경기동향", {}).get("판정", "")
-            market_scores = {key: score_market_item(market.get(key, {}).get("판정", "")) for key in MARKET_LABELS}
+            market_scores = {
+                key: score_market_item(market.get(key, {}).get("판정", ""))
+                for key in MARKET_LABELS
+            }
 
             tech = analyze_technical(hist)
             tech_score, tech_score_detail = score_technical(tech)
 
             fundamental_scores = {}
             if is_etf:
-                etf_data = fetch_etf_raw_data(ticker_obj, info)
+                etf_data = data["etf_data"]
                 etf_score, etf_score_detail = score_etf_fundamentals(etf_data, currency)
                 fundamental_scores["ETF구성"] = etf_score
             else:
-                income, balance, cashflow = get_financials(ticker_obj)
+                income, balance, cashflow = data["financials"], data["balance"], data["cashflow"]
                 internal = analyze_internal_factors(balance, income, cashflow)
                 internal_score, internal_score_detail = score_internal_factors(balance, income, cashflow)
                 fundamental_scores["내부요인"] = internal_score
@@ -385,32 +575,35 @@ if analyze_btn and ticker_input:
                 fundamental_scores["산업동향"] = industry_score
 
             fundamental_scores["기술적분석"] = tech_score
-            overall = compute_overall_score(fundamental_scores, market_scores, market_weights, fundamental_weight_pct)
+            overall = compute_overall_score(
+                fundamental_scores, market_scores, market_weights, fundamental_weight_pct
+            )
             ov_score = overall["overall_score"]
             ov_color = _score_color(ov_score)
 
             # ---- 종합 평가 ----
             st.markdown("---")
             st.markdown(
-                f'<h2 style="margin-bottom:4px">🏆 종합 평가 &nbsp;'
+                f'<h2 style="margin-bottom:4px">{t("overall_title")} &nbsp;'
                 f'<span style="background:{ov_color};color:#fff;padding:4px 22px;'
                 f'border-radius:24px;font-size:1rem;">'
                 f'{ov_score}점 &nbsp;{overall["grade"]}</span></h2>',
                 unsafe_allow_html=True,
             )
             if is_etf:
-                st.caption("⚠️ ETF는 재무제표 대신 운용보수·순자산·집중도 기반 ETF구성 점수를 사용합니다.")
+                st.caption(t("etf_caption"))
 
             sc1, sc2, sc3, sc4 = st.columns(4)
-            sc1.metric("🏆 종합 점수", f"{ov_score}점")
-            sc2.metric("📋 펀더멘탈 평균", f"{round(overall['fundamental_avg'])}점")
-            sc3.metric("🌍 시장환경 평균", f"{round(overall['market_avg'])}점")
-            sc4.metric("🎯 등급", overall["grade"])
+            sc1.metric(t("overall_score"), f"{ov_score}점")
+            sc2.metric(t("fundamental_avg"), f"{round(overall['fundamental_avg'])}점")
+            sc3.metric(t("market_avg"), f"{round(overall['market_avg'])}점")
+            sc4.metric(t("grade_label"), overall["grade"])
 
             # 레이더 차트
+            _mkt_labels = MARKET_LABELS_EN if st.session_state["lang"] == "en" else MARKET_LABELS
             radar_labels = (
                 list(fundamental_scores.keys())
-                + [MARKET_LABELS[k].split(" (")[0] for k in MARKET_LABELS]
+                + [_mkt_labels[k].split(" (")[0] for k in _mkt_labels]
             )
             radar_values = list(fundamental_scores.values()) + list(market_scores.values())
             radar_fig = go.Figure()
@@ -435,32 +628,32 @@ if analyze_btn and ticker_input:
             # 펀더멘탈 상세
             # =========================================================
             if is_etf:
-                section_header("①", "ETF 구성 분석", etf_score)
-                st.caption("재무제표 대신 운용보수·순자산·집중도로 평가합니다.")
+                section_header("①", t("section1_etf"), etf_score)
+                st.caption(t("etf_caption"))
                 kv_cards(etf_score_detail)
-                with st.expander("ETF 원시 데이터"):
+                with st.expander(t("etf_raw")):
                     st.json({k: v for k, v in etf_data.items() if k != "_데이터품질"}, expanded=False)
             else:
                 # ① 기업 내부요인
-                section_header("①", "기업 내부요인 평가", internal_score)
+                section_header("①", t("section1_stock"), internal_score)
                 kv_cards(internal_score_detail)
-                with st.expander("📂 추이 원시 데이터 (연도별)"):
+                with st.expander(t("raw_data")):
                     render_ts_detail(internal)
 
                 st.markdown("")
 
                 # ② 재무지표
-                section_header("②", "재무지표 평가", ratios_score)
+                section_header("②", t("section2"), ratios_score)
                 kv_cards(ratios_score_detail)
-                with st.expander("📂 재무지표 원시 데이터 (연도별)"):
+                with st.expander(t("raw_data")):
                     render_ts_detail(ratios)
 
                 st.markdown("")
 
                 # 밸류에이션 비교
-                st.markdown("### 📊 밸류에이션 멀티플 비교 — PER / PBR / PSR / EPS / ROE")
+                st.markdown(f"### {t('valuation_title')}")
                 main_metrics = extract_valuation_metrics(info, ticker_obj=ticker_obj)
-                peers_raw = get_peer_info_list(info, resolved_ticker, max_peers=5)
+                peers_raw = data["peers_raw"]
                 peers_data_v = [
                     {"ticker": p["ticker"], "metrics": extract_valuation_metrics(p["info"])}
                     for p in peers_raw
@@ -479,10 +672,14 @@ if analyze_btn and ticker_input:
                     avail_cols = ["설명"] + [c for c in col_order if c in df_val.columns]
 
                     def _color_eval(val):
-                        if not isinstance(val, str): return ""
-                        if "✅" in val: return "background-color:#d4edda;color:#155724;font-weight:600"
-                        if "⚠️" in val: return "background-color:#f8d7da;color:#721c24;font-weight:600"
-                        if "➖" in val: return "background-color:#e9ecef;color:#495057"
+                        if not isinstance(val, str):
+                            return ""
+                        if "✅" in val:
+                            return "background-color:#d4edda;color:#155724;font-weight:600"
+                        if "⚠️" in val:
+                            return "background-color:#f8d7da;color:#721c24;font-weight:600"
+                        if "➖" in val:
+                            return "background-color:#e9ecef;color:#495057"
                         return ""
 
                     numeric_cols = [c for c in avail_cols if c not in ("설명", "평가")]
@@ -490,54 +687,55 @@ if analyze_btn and ticker_input:
                         df_val[nc] = pd.to_numeric(df_val[nc], errors="coerce")
                     styled_val = df_val[avail_cols].style
                     if "평가" in avail_cols:
-                        styled_val = styled_val.applymap(_color_eval, subset=["평가"])
+                        styled_val = styled_val.map(_color_eval, subset=["평가"])
                     if numeric_cols:
                         styled_val = styled_val.format("{:.2f}", subset=numeric_cols, na_rep="N/A")
                     st.dataframe(styled_val, use_container_width=True)
 
                     if peer_list:
-                        st.caption(f"비교 대상 ({len(peer_list)}개): {', '.join(peer_list)}")
+                        st.caption(f"{t('peers_label')} ({len(peer_list)}개): {', '.join(peer_list)}")
                     else:
-                        st.info("동종업계 비교 대상을 찾지 못했습니다. 현재 미국 대형주 업종만 지원됩니다.")
+                        st.info(t("no_peers"))
 
-                    with st.expander("지표 해석 가이드"):
+                    with st.expander(t("valuation_guide")):
                         for key, (name, desc, direction) in VALUATION_METRIC_INFO.items():
                             good = "낮을수록 유리" if direction == "low_good" else "높을수록 유리"
                             st.markdown(f"**{key}** ({name}): {desc} _{good}_")
                 else:
-                    st.info("밸류에이션 지표 데이터를 가져오지 못했습니다.")
+                    st.info(t("no_valuation"))
 
                 st.markdown("")
 
                 # ③ 산업동향
-                section_header("③", "산업동향 평가", industry_score)
+                section_header("③", t("section3"), industry_score)
                 ind1, ind2, ind3, ind4 = st.columns(4)
-                ind1.metric("🏭 섹터", industry.get("섹터", "N/A"))
-                ind2.metric("🔬 세부산업", industry.get("세부산업", "N/A")[:30])
-                ind3.metric("📈 산업주기", industry.get("산업주기", "N/A"))
-                ind4.metric("🔄 산업특성", industry.get("산업특성", "N/A")[:20])
+                ind1.metric(t("sector_label"), industry.get("섹터", "N/A"))
+                ind2.metric(t("industry_label"), industry.get("세부산업", "N/A")[:30])
+                ind3.metric(t("cycle_label"), industry.get("산업주기", "N/A"))
+                ind4.metric(t("nature_label"), industry.get("산업특성", "N/A")[:20])
                 kv_cards(industry_score_detail)
 
             st.markdown("")
 
             # ④ 기술적 분석
-            section_header("④", "기술적 분석", tech_score)
+            section_header("④", t("section4"), tech_score)
             t1, t2, t3, t4 = st.columns(4)
-            trend_short = "상승" if "상승" in tech["추세"] else "하락"
-            t1.metric("📈 추세", trend_short, tech["추세"].replace("추세 ", "").replace("(", "").replace(")", ""))
+            trend_short = t("trend_up") if "상승" in tech["추세"] else t("trend_down")
+            t1.metric(t("trend_label"), trend_short,
+                      tech["추세"].replace("추세 ", "").replace("(", "").replace(")", ""))
             rsi_val = tech["RSI(14)"]
             rsi_icon = "🔴" if isinstance(rsi_val, float) and (rsi_val > 70 or rsi_val < 30) else "🟢"
-            t2.metric(f"{rsi_icon} RSI(14)", rsi_val)
-            t3.metric("🧠 투자심리", tech["투자심리"])
-            vol_short = "급증" if "급증" in tech["수급_거래량"] else "보통"
-            t4.metric("📦 거래량", vol_short)
+            t2.metric(f"{rsi_icon} {t('rsi_label')}", rsi_val)
+            t3.metric(t("sentiment"), tech["투자심리"])
+            vol_short = t("vol_surge") if "급증" in tech["수급_거래량"] else t("vol_normal")
+            t4.metric(t("volume_label"), vol_short)
 
-            # 가격 차트 (거래량 서브플롯 포함)
+            # 가격 차트
             chart_data = tech["chart_data"]
             price_fig = make_subplots(
                 rows=2, cols=1, shared_xaxes=True,
                 row_heights=[0.72, 0.28], vertical_spacing=0.04,
-                subplot_titles=("", "거래량"),
+                subplot_titles=("", t("volume_chart")),
             )
             price_fig.add_trace(go.Scatter(
                 x=chart_data.index, y=chart_data["Close"],
@@ -557,7 +755,7 @@ if analyze_btn and ticker_input:
             ), row=1, col=1)
             price_fig.add_trace(go.Bar(
                 x=chart_data.index, y=chart_data["Volume"],
-                name="거래량", marker_color="#adb5bd", opacity=0.6
+                name=t("volume_chart"), marker_color="#adb5bd", opacity=0.6
             ), row=2, col=1)
             price_fig.update_layout(
                 height=500,
@@ -574,9 +772,10 @@ if analyze_btn and ticker_input:
             st.markdown("---")
 
             # ---- 시장환경 ----
-            st.markdown("### 🌍 시장환경 분석")
+            st.markdown(f"### {t('market_env')}")
+            _mkt_label_map = MARKET_LABELS_EN if st.session_state["lang"] == "en" else MARKET_LABELS
             m_cols = st.columns(4)
-            for i, (key, label) in enumerate(MARKET_LABELS.items()):
+            for i, (key, label) in enumerate(_mkt_label_map.items()):
                 data_m = market.get(key, {})
                 verdict = data_m.get("판정") or data_m.get("안내") or data_m.get("오류") or "N/A"
                 sc = market_scores[key]
@@ -594,19 +793,18 @@ if analyze_btn and ticker_input:
                 )
 
             st.markdown("")
-            _desc_map = MARKET_INDEX_DESC.get(market_type, MARKET_INDEX_DESC["US"])
-            for key, label in MARKET_LABELS.items():
+            _desc_map = MARKET_INDEX_DESC.get(market_type, MARKET_INDEX_DESC["DEFAULT"])
+            for key, label in _mkt_label_map.items():
                 with st.expander(f"🔍 {label}"):
                     st.markdown(_desc_map.get(key, ""), unsafe_allow_html=False)
                     st.divider()
                     render_market_detail(market.get(key, {}))
 
         except Exception as e:
-            st.error(f"분석 중 오류가 발생했습니다: {e}")
-            st.info("티커가 올바른지, 또는 yfinance가 해당 종목 데이터를 제공하는지 확인해주세요.")
+            st.error(f"{t('analysis_error')}{e}")
+            st.info(t("check_ticker"))
+            with st.expander(t("error_detail")):
+                st.code(traceback.format_exc())
 
 st.markdown("---")
-st.caption(
-    "⚠️ 이 도구는 프로토타입이며 투자 조언이 아닙니다. 점수/등급은 규칙 기반 근사치로, "
-    "재무데이터는 yfinance 기준이라 실제 공시와 차이가 있을 수 있으니 투자 판단 시 원문 공시를 반드시 확인하세요."
-)
+st.caption(t("footer"))
