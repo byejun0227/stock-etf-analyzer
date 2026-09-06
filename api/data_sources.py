@@ -11,6 +11,7 @@ yfinance, FRED API 등 네트워크 호출이 필요한 함수를 모아둡니�
 
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -138,7 +139,11 @@ def classify_ticker(ticker: str):
 # 2. 가격/재무 데이터 수집
 # =========================================================
 def get_peer_info_list(info: dict, resolved_ticker: str, max_peers: int = 5) -> list:
-    """업종 기반으로 경쟁사 최대 max_peers개 선정 후 yfinance info 반환.
+    """업종 기반으로 경쟁사 최대 max_peers개 선정 후 yfinance info 반환 (병렬 조회).
+
+    Vercel 서버리스 함수의 실행시간 예산 안에 들어오도록 순차 sleep 대신
+    ThreadPoolExecutor로 후보들을 동시에 조회한다. 실패 대비 여유분(+3)을 포함해
+    조회하고, 완료 순서와 무관하게 원래 후보 순서를 유지해 반환한다.
     returns: [{"ticker": "AAPL", "info": {...}}, ...]"""
     sector = info.get("sector", "")
     pool = SECTOR_PEERS.get(sector, [])
@@ -146,15 +151,26 @@ def get_peer_info_list(info: dict, resolved_ticker: str, max_peers: int = 5) -> 
     # 현재 종목 풀에서 제외
     base = resolved_ticker.split(".")[0].upper()
     pool = [t for t in pool if t.upper() != base]
+    candidates = pool[: max_peers + 3]
+    if not candidates:
+        return []
 
     result = []
-    for sym in pool:
-        if len(result) >= max_peers:
-            break
-        time.sleep(0.4)
-        peer_info = _safe_info(sym)
-        if peer_info and peer_info.get("regularMarketPrice") is not None:
-            result.append({"ticker": sym, "info": peer_info})
+    with ThreadPoolExecutor(max_workers=min(4, len(candidates))) as executor:
+        future_to_sym = {executor.submit(_safe_info, sym): sym for sym in candidates}
+        for future in as_completed(future_to_sym):
+            if len(result) >= max_peers:
+                break
+            sym = future_to_sym[future]
+            try:
+                peer_info = future.result()
+            except Exception:
+                continue
+            if peer_info and peer_info.get("regularMarketPrice") is not None:
+                result.append({"ticker": sym, "info": peer_info})
+
+    order = {sym: i for i, sym in enumerate(candidates)}
+    result.sort(key=lambda r: order.get(r["ticker"], len(order)))
     return result
 
 

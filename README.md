@@ -1,38 +1,49 @@
 # 한국·미국 주식/ETF 펀더멘탈 & 시장환경 분석기
 
-과거 5년 데이터를 기반으로 펀더멘탈 4개 항목 + 시장환경 4개 항목을 평가하는 Streamlit 프로토타입입니다.
+과거 5년 데이터를 기반으로 펀더멘탈 4개 항목 + 시장환경 4개 항목을 평가하는 프로토타입입니다.
+Next.js(프론트엔드) + Vercel Python Function(분석 백엔드)으로 구성되어 있으며, Vercel에 직접
+배포할 수 있습니다.
 
 ## 파일 구조
 
 ```
-app.py             # Streamlit UI (화면 표시만 담당)
-analysis.py        # 순수 계산/점수화 로직 (외부 의존성 없음 → 테스트 대상)
-data_sources.py     # yfinance/FRED API 등 외부 데이터 수집
-test_analysis.py   # analysis.py 단위테스트 (43개, 표준 unittest만 사용)
-requirements.txt   # 필요 패키지 목록
-.streamlit/config.toml  # 테마 설정
+app/                        # Next.js App Router (프론트엔드)
+  page.tsx                    # 세션 확인 후 로그인/대시보드 분기
+  api/auth/*/route.ts         # OAuth 콜백, 관리자 로그인, 로그아웃 (Node.js 런타임)
+components/                  # React UI 컴포넌트
+lib/                        # i18n, 세션(JWT), OAuth URL 빌더, 타입, 상수
+api/
+  index.py                    # FastAPI 앱 — POST /api/analyze (Vercel Python Function)
+  analysis.py                 # 순수 계산/점수화 로직 (외부 의존성 없음 → 테스트 대상)
+  data_sources.py              # yfinance/FRED API 등 외부 데이터 수집
+test_analysis.py             # analysis.py 단위테스트 (43개, 표준 unittest만 사용)
+requirements.txt             # Python 함수 의존성
+vercel.json                  # Python 함수 설정 (maxDuration 등)
 ```
 
-`app.py`는 화면 표시만 하고, `data_sources.py`가 데이터를 가져오면, `analysis.py`가 계산합니다.
-이렇게 나눈 이유는 **`analysis.py`는 yfinance/streamlit 없이도 테스트할 수 있게** 하기 위해서입니다.
+`analysis.py`/`data_sources.py`는 예전 Streamlit 버전과 동일한 로직이며, `api/index.py`가
+프론트엔드 요청을 받아 이 모듈들을 호출해 결과를 JSON으로 반환합니다.
 
 ---
 
 ## 1. 로컬에서 실행하기
 
 ```bash
+npm install
 pip install -r requirements.txt
-streamlit run app.py
+cp .env.example .env.local   # 값 채우기 (최소 SESSION_SECRET 필요)
+vercel dev
 ```
 
-브라우저가 자동으로 열리며 `http://localhost:8501` 에서 확인할 수 있습니다.
+`vercel dev`는 Next.js 프론트엔드와 `api/index.py`(Python) Function을 함께 구동합니다.
+Vercel CLI가 없다면 `npm i -g vercel`로 설치하세요. `http://localhost:3000`에서 확인할 수 있습니다.
 
 ---
 
 ## 2. 테스트 실행하기
 
 핵심 로직(점수 계산, 티커 정규화, 등급 판정 등)에 대한 단위테스트가 포함되어 있습니다.
-yfinance나 streamlit 설치 없이도 실행 가능합니다 (pandas/numpy만 있으면 됩니다).
+yfinance 설치 없이도 실행 가능합니다 (pandas/numpy만 있으면 됩니다).
 
 ```bash
 python -m unittest test_analysis.py -v
@@ -50,42 +61,29 @@ python -m unittest test_analysis.py -v
 코드를 수정한 뒤에는 이 명령어로 다시 돌려서 회귀(regression)가 없는지 확인하세요.
 
 > `data_sources.py`는 실제 네트워크 호출이 필요해 이 저장소에는 자동테스트가 없습니다.
-> 배포 전에는 `streamlit run app.py`로 직접 몇 개 종목을 조회해 정상 동작을 확인하시길 권장합니다.
+> 배포 전에는 `vercel dev`로 직접 몇 개 종목을 조회해 정상 동작을 확인하시길 권장합니다.
 
 ---
 
-## 3. 웹에 배포하기 (Streamlit Community Cloud, 무료)
+## 3. Vercel에 배포하기
 
-가장 쉬운 방법은 Streamlit이 공식 제공하는 무료 호스팅입니다. 공개 저장소 기준으로 카드 등록 없이 배포됩니다.
+1. GitHub 저장소를 Vercel 프로젝트로 import (Framework Preset: Next.js — 자동 감지됨)
+2. **Project Settings → Environment Variables**에 아래 값을 등록 (`.env.example` 참고):
+   - `SESSION_SECRET` (필수 — 로그인 세션 서명용 임의의 긴 문자열)
+   - `FRED_API_KEY` (선택 — 없으면 시장환경 분석이 "데이터 없음"으로 표시됨)
+   - `ADMIN_ID` / `ADMIN_PW` (선택 — 기본값 admin/admin1234)
+   - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, `KAKAO_REST_API_KEY` (선택 — 없으면 해당 로그인
+     버튼이 비활성화된 채로 표시됨)
+   - `REDIRECT_URI` = 배포 도메인 (예: `https://your-app.vercel.app`). Google/Kakao 콘솔의
+     승인된 리디렉션 URI에는 `${REDIRECT_URI}/api/auth/callback` 을 등록해야 합니다.
+3. Deploy
 
-1. 이 폴더를 GitHub 저장소에 올립니다 (public 저장소 권장 — free tier는 공개 앱만 지원)
-   ```bash
-   git init
-   git add .
-   git commit -m "최초 커밋"
-   git remote add origin <본인의 GitHub 저장소 URL>
-   git push -u origin main
-   ```
-2. https://share.streamlit.io 접속 → GitHub 계정으로 로그인
-3. **"Create app"** → **"Deploy a public app from GitHub"** 선택
-4. Repository / Branch / 메인 파일 경로(`app.py`)를 지정
-5. **Advanced settings**에서 FRED API 키를 Secrets로 등록 (선택):
-   ```toml
-   FRED_API_KEY = "발급받은_키"
-   ```
-   등록해두면 앱이 `os.environ.get("FRED_API_KEY")`로 자동으로 읽어옵니다. (코드 수정 불필요)
-6. **Deploy** 클릭 → 1~3분 후 `https://<your-app-name>.streamlit.app` 형태의 공개 URL이 발급됩니다.
-
-이후 GitHub 저장소에 커밋을 푸시할 때마다 앱이 자동으로 재배포됩니다.
-
-### 무료 티어 참고사항
-- 앱은 반드시 **공개(public)** 상태여야 합니다.
-- 앱당 리소스 한도는 약 2.7GB이며, 개인 계정 기준 비공개 앱은 1개까지 가능합니다.
-- FRED API 키처럼 민감한 값은 코드에 직접 넣지 말고 반드시 Secrets 기능을 사용하세요.
-
-### 다른 배포 옵션
-Streamlit Community Cloud 외에도 Docker로 패키징해 AWS/GCP/Azure의 컨테이너 서비스나 Hugging Face Spaces,
-Render/Railway 등에 배포할 수 있습니다. 개인 프로토타입 단계에서는 Community Cloud가 가장 간단합니다.
+### 알려진 제약
+- Python 함수(`api/index.py`)는 종목당 여러 외부 API(yfinance, FRED)를 순차/병렬 호출하므로
+  **Hobby 플랜의 10초 실행시간 제한에 걸릴 수 있습니다.** 경쟁사 비교가 포함된 개별주식 분석은
+  Pro 플랜(최대 60초, `vercel.json`에서 `maxDuration` 설정) 사용을 권장합니다.
+- 서버리스 특성상 워커 인스턴스가 재사용될 때만 유효한 in-memory 캐시를 사용하므로, 매 요청마다
+  캐시가 보장되지는 않습니다 (원본 Streamlit의 `st.cache_data`와 동일한 의도의 best-effort 최적화).
 
 ---
 
