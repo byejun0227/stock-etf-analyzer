@@ -8,9 +8,33 @@ analysis.py — 순수 계산/판정 로직 모듈
 데이터 수집(yfinance, FRED API 호출)은 data_sources.py에 있습니다.
 """
 
+import json
 import re
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
+
+
+def _load_kr_stock_map() -> dict[str, str]:
+    """KRX 상장 종목 전체 명단(공식 종목명 → 티커, .KS/.KQ 포함)을 로드.
+
+    출처: FinanceData/marcap (https://github.com/FinanceData/marcap)의
+    최신 일별 스냅샷에서 Code/Name/Market만 추출해 정적으로 번들링한 파일
+    (api/_lib/kr_stock_map.json). 공식 종목명 기준이라 "엔씨소프트"처럼 흔히
+    쓰이는 옛 상호명은 못 잡을 수 있어 KOREAN_STOCK_NAME_MAP(수작업 별칭)을
+    우선 적용한 뒤 이 맵으로 보완한다.
+    """
+    path = Path(__file__).parent / "kr_stock_map.json"
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[analysis] failed to load kr_stock_map.json: {e}")
+        return {}
+
+
+KR_STOCK_MAP: dict[str, str] = _load_kr_stock_map()
 
 
 # =========================================================
@@ -357,7 +381,8 @@ def normalize_ticker_input(user_input: str) -> str:
     처리 순서:
     1. 알려진 거래소 suffix가 이미 있으면 대문자로 반환
     2. 한국 ETF 이름 → 종목코드.KS
-    3. 한국 개별주식 한글 이름 → 종목코드.KS
+    3. 한국 개별주식 한글 이름(수작업 별칭) → 종목코드.KS
+    3.5. KRX 상장 전체 종목 공식명 (KR_STOCK_MAP, ~2,900개) → 종목코드.KS/.KQ
     4. 미국 주식 한글/영문 약칭 → 티커
     5. 일본/중국/홍콩/대만/인도/유럽 한글 이름 → 해당 티커
     6. 6자리 숫자 → 한국 종목코드.KS
@@ -376,9 +401,13 @@ def normalize_ticker_input(user_input: str) -> str:
     if raw in KOREAN_ETF_NAME_MAP:
         return KOREAN_ETF_NAME_MAP[raw] + ".KS"
 
-    # 3. 한국 개별주식 이름
+    # 3. 한국 개별주식 이름 (수작업 별칭 — 옛 상호명 등 KRX 공식명과 다른 경우 대응)
     if raw in KOREAN_STOCK_NAME_MAP:
         return KOREAN_STOCK_NAME_MAP[raw] + ".KS"
+
+    # 3.5. KRX 상장 전체 종목 공식명 (하드코딩 별칭에 없는 나머지 대부분을 커버)
+    if raw in KR_STOCK_MAP:
+        return KR_STOCK_MAP[raw]
 
     # 4. 미국 주식 한글/약칭
     if raw in KOREAN_US_STOCK_NAME_MAP:
