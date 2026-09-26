@@ -96,11 +96,32 @@ SECTOR_PEERS = {
 # =========================================================
 # 1. 종목 판별 (한국/미국 시장 자동 감지)
 # =========================================================
+def _search_ticker_symbol(query: str) -> str | None:
+    """Yahoo Finance 검색으로 이름에 해당하는 티커를 찾는다.
+
+    normalize_ticker_input의 정적 이름 맵(하드코딩된 몇십 개 종목)에 없는
+    이름을 입력했을 때의 최후 수단 — 실시간 Yahoo Finance 검색 결과 중
+    첫 번째 EQUITY/ETF 종목을 티커로 채택한다.
+    """
+    try:
+        results = yf.Search(query, max_results=8).quotes
+    except Exception:
+        return None
+    if not results:
+        return None
+    preferred = [q for q in results if q.get("quoteType", "").upper() in ("EQUITY", "ETF")]
+    pool = preferred or results
+    symbol = pool[0].get("symbol")
+    return symbol.upper() if symbol else None
+
+
 def classify_ticker(ticker: str):
     """티커를 조회해서 시장·통화·유형(ETF/개별주식)을 판별.
 
     - 한국 .KS 조회 실패 시 .KQ로 재시도
     - 글로벌 suffix(.T/.HK/.DE 등) 자동 감지
+    - 위 방법으로도 못 찾으면 Yahoo Finance 검색으로 최종 재시도
+      (정적 이름 맵에 없는 종목명 대응)
     """
     normalized = normalize_ticker_input(ticker)
     market, default_currency = _detect_market_currency(normalized)
@@ -118,6 +139,16 @@ def classify_ticker(ticker: str):
             if info_alt and info_alt.get("regularMarketPrice") is not None:
                 t, info, normalized = t_alt, info_alt, alt
                 market, default_currency = "KR", "KRW"
+
+    # 그래도 못 찾았으면 Yahoo Finance 검색으로 최종 시도
+    if not info or info.get("regularMarketPrice") is None:
+        found = _search_ticker_symbol(ticker)
+        if found:
+            t_found = yf.Ticker(found)
+            info_found = _safe_info(found)
+            if info_found and info_found.get("regularMarketPrice") is not None:
+                t, info, normalized = t_found, info_found, found
+                market, default_currency = _detect_market_currency(found)
 
     quote_type = info.get("quoteType", "").upper()
     is_etf = quote_type == "ETF"
