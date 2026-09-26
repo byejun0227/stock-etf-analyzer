@@ -408,7 +408,7 @@ def analyze_business_cycle_kr(api_key: str) -> dict:
 
 def analyze_monetary_fiscal_policy_kr(api_key: str) -> dict:
     """통화/재정정책 (한국): 한국은행 기준금리 + M2.
-    FRED 시리즈를 순서대로 시도하고, 모두 실패 시 채권ETF(195930.KS) 대리 지표 사용."""
+    FRED 시리즈를 순서대로 시도하고, 모두 실패 시 채권ETF(365780.KS) 대리 지표 사용."""
     result = {}
 
     # FRED 한국 금리 시리즈 후보 (순서대로 시도)
@@ -437,9 +437,11 @@ def analyze_monetary_fiscal_policy_kr(api_key: str) -> dict:
         result["판정"] = rate_dir
         result[rate_label] = f"{bok_prev:.2f} → {bok_latest:.2f}"
     else:
-        # 모든 FRED 시리즈 실패 → KODEX 국고채10년 ETF를 대리 지표로 사용
+        # 모든 FRED 시리즈 실패 → 국고채10년 ETF를 대리 지표로 사용
+        # (195930.KS는 과거 "KODEX 국고채10년"이었으나 상장폐지 후 코드가
+        # 재사용되어 현재는 전혀 다른 유럽 주식형 ETF다 — ACE 국고채10년으로 교체)
         try:
-            bond = yf.Ticker("195930.KS").history(period="1y")["Close"].dropna()
+            bond = yf.Ticker("365780.KS").history(period="1y")["Close"].dropna()
             if bond.empty:
                 raise ValueError("채권 ETF 데이터 없음")
             b_latest = bond.iloc[-1]
@@ -448,8 +450,8 @@ def analyze_monetary_fiscal_policy_kr(api_key: str) -> dict:
             rate_dir = "완화(금리 인하 추정)" if b_latest > b_prev * 1.005 else \
                        "긴축(금리 인상 추정)" if b_latest < b_prev * 0.995 else "동결 추정"
             result["판정"] = rate_dir
-            result["KODEX 국고채10년 추이"] = f"{b_prev:,.0f} → {b_latest:,.0f}"
-            result["참고"] = "FRED 한국 금리 데이터 조회 불가. KODEX 국고채10년 ETF(195930.KS) 가격 변화로 금리 방향 추정"
+            result["ACE 국고채10년 추이"] = f"{b_prev:,.0f} → {b_latest:,.0f}"
+            result["참고"] = "FRED 한국 금리 데이터 조회 불가. ACE 국고채10년 ETF(365780.KS) 가격 변화로 금리 방향 추정"
         except Exception as e:
             result["판정"] = "데이터 없음"
             result["오류"] = f"금리 데이터 조회 불가: {e}"

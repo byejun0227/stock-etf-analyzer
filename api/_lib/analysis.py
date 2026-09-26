@@ -16,25 +16,31 @@ import pandas as pd
 import numpy as np
 
 
-def _load_kr_stock_map() -> dict[str, str]:
-    """KRX 상장 종목 전체 명단(공식 종목명 → 티커, .KS/.KQ 포함)을 로드.
-
-    출처: FinanceData/marcap (https://github.com/FinanceData/marcap)의
-    최신 일별 스냅샷에서 Code/Name/Market만 추출해 정적으로 번들링한 파일
-    (api/_lib/kr_stock_map.json). 공식 종목명 기준이라 "엔씨소프트"처럼 흔히
-    쓰이는 옛 상호명은 못 잡을 수 있어 KOREAN_STOCK_NAME_MAP(수작업 별칭)을
-    우선 적용한 뒤 이 맵으로 보완한다.
-    """
-    path = Path(__file__).parent / "kr_stock_map.json"
+def _load_json_map(filename: str) -> dict[str, str]:
+    """api/_lib/에 번들된 정적 이름→티커 JSON 맵을 로드 (실패 시 빈 dict)."""
+    path = Path(__file__).parent / filename
     try:
         with path.open("r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        print(f"[analysis] failed to load kr_stock_map.json: {e}")
+        print(f"[analysis] failed to load {filename}: {e}")
         return {}
 
 
-KR_STOCK_MAP: dict[str, str] = _load_kr_stock_map()
+# KRX 상장 종목 전체 명단 (공식 종목명 → 티커, .KS/.KQ 포함).
+# 출처: FinanceData/marcap (https://github.com/FinanceData/marcap)의 최신
+# 일별 스냅샷에서 Code/Name/Market만 추출. 공식 종목명 기준이라 "엔씨소프트"
+# 처럼 흔히 쓰이는 옛 상호명은 못 잡을 수 있어 KOREAN_STOCK_NAME_MAP(수작업
+# 별칭)을 먼저 적용한 뒤 이 맵으로 보완한다.
+KR_STOCK_MAP: dict[str, str] = _load_json_map("kr_stock_map.json")
+
+# 국내 상장 ETF 전체 명단 (종목명 → 티커, 전부 .KS).
+# 출처: 네이버 금융 ETF 목록 API (finance.naver.com/api/sise/etfItemList.nhn).
+# 수작업으로 유지하던 KOREAN_ETF_NAME_MAP은 상장폐지/코드 재사용으로 다수의
+# 오류가 확인되어(예: 195930은 더 이상 "KODEX 국고채10년"이 아니라 전혀 다른
+# "TIGER 유로스탁스50(합성 H)"), 이 실시간 명단을 우선 적용하고
+# KOREAN_ETF_NAME_MAP은 여기 없는 것만 보완하는 용도로 남겨둔다.
+KR_ETF_MAP: dict[str, str] = _load_json_map("kr_etf_map.json")
 
 
 # =========================================================
@@ -50,12 +56,12 @@ KOREAN_ETF_NAME_MAP = {
     "KODEX 레버리지":        "122630",
     "TIGER 레버리지":        "123320",
     "KODEX 코스닥150레버리지": "233740",
-    "TIGER 코스닥150레버리지": "261110",
+    "TIGER 코스닥150레버리지": "233160",
     # ── 인버스 ─────────────────────────────────────────
     "KODEX 인버스":          "114800",
     "KODEX 200선물인버스2X": "252670",
-    "TIGER 인버스":          "219390",
-    "TIGER 200선물인버스2X": "243890",
+    "TIGER 인버스":          "123310",
+    "TIGER 200선물인버스2X": "252710",
     # ── 섹터 ETF ───────────────────────────────────────
     "KODEX 반도체":          "091160",
     "TIGER 반도체":          "091230",
@@ -64,8 +70,7 @@ KOREAN_ETF_NAME_MAP = {
     "TIGER 2차전지테마":     "305540",
     "KODEX 바이오":          "244580",
     "TIGER 헬스케어":        "143860",
-    "KODEX 금융":            "139270",
-    "TIGER 은행":            "091170",
+    "TIGER 은행":            "091220",
     # ── 단일종목 레버리지 ETF ─────────────────────────
     "KODEX SK하이닉스 레버리지":           "0193T0",
     "KODEX SK 하이닉스 레버리지":          "0193T0",
@@ -76,10 +81,8 @@ KOREAN_ETF_NAME_MAP = {
     "KODEX 삼성전자단일종목레버리지":      "0193W0",
     "KODEX 삼성전자 단일종목레버리지":     "0193W0",
     # ── 채권·배당 ETF ──────────────────────────────────
-    "KODEX 국고채10년":      "195930",
-    "TIGER 국채3년":         "114260",
-    "KODEX 고배당":          "279080",
-    "TIGER 배당성장":        "292150",
+    "TIGER 국채3년":         "114820",
+    "TIGER 배당성장":        "211560",
 }
 
 # 한국 개별주식 한글 이름 -> 종목코드 매핑 (결과에 .KS 자동 추가)
@@ -380,7 +383,7 @@ def normalize_ticker_input(user_input: str) -> str:
 
     처리 순서:
     1. 알려진 거래소 suffix가 이미 있으면 대문자로 반환
-    2. 한국 ETF 이름 → 종목코드.KS
+    2. 한국 ETF 이름 (KR_ETF_MAP 실시간 명단 우선, 없으면 KOREAN_ETF_NAME_MAP) → 종목코드.KS
     3. 한국 개별주식 한글 이름(수작업 별칭) → 종목코드.KS
     3.5. KRX 상장 전체 종목 공식명 (KR_STOCK_MAP, ~2,900개) → 종목코드.KS/.KQ
     4. 미국 주식 한글/영문 약칭 → 티커
@@ -397,7 +400,10 @@ def normalize_ticker_input(user_input: str) -> str:
         if upper.endswith(suffix):
             return upper
 
-    # 2. 한국 ETF 이름
+    # 2. 한국 ETF 이름 (실시간 명단 우선 — ETF 코드는 재사용/변경되어 하드코딩이
+    # 종종 틀리므로, 없는 것만 하드코딩 별칭(KOREAN_ETF_NAME_MAP)으로 보완)
+    if raw in KR_ETF_MAP:
+        return KR_ETF_MAP[raw]
     if raw in KOREAN_ETF_NAME_MAP:
         return KOREAN_ETF_NAME_MAP[raw] + ".KS"
 
